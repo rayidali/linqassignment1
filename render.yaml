@@ -1,0 +1,45 @@
+# Render Blueprint config. When you connect this repo to Render via
+# Dashboard → New → Blueprint, Render reads this file and creates the
+# Web Service. You then paste the secret env vars (marked `sync: false`)
+# in the Render dashboard once.
+#
+# The Postgres you already created on Render is referenced via DATABASE_URL.
+
+services:
+  - type: web
+    name: linq-video-editor
+    runtime: node
+    plan: starter           # always-on. Free plan sleeps after 15min idle.
+    region: ohio            # match your Postgres region for lowest latency.
+    branch: main
+    autoDeploy: true        # redeploy on every push to main.
+    buildCommand: npm install && npm run build
+    startCommand: npx prisma migrate deploy && npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ADMIN_SECRET
+        generateValue: true # Render generates and stores; we never see it.
+      - key: DATABASE_URL
+        sync: false         # paste internal URL from Postgres dashboard.
+      - key: LINQ_API_KEY
+        sync: false
+      - key: LINQ_WEBHOOK_SECRET
+        sync: false
+      - key: SHOTSTACK_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false

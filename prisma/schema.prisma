@@ -1,0 +1,23 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Job {
+  id          String    @id @default(cuid())
+  externalId  String    @unique
+  state       String
+  payload     Json
+  result      Json?
+  error       String?
+  claimedAt   DateTime?
+  claimedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([state, claimedAt])
+}
