@@ -11,8 +11,11 @@ async function main() {
   logger.info({ recovered }, "boot recovery complete");
 
   const app = express();
-  app.use(express.json({ limit: "1mb" }));
+  // webhookRouter mounts express.raw() on /webhook itself — must register
+  // BEFORE the global express.json() so the JSON parser doesn't consume the
+  // body and break HMAC verification.
   app.use(webhookRouter);
+  app.use(express.json({ limit: "1mb" }));
   app.use(adminRouter);
 
   const server = app.listen(env.PORT, () => {

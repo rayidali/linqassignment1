@@ -1,5 +1,6 @@
 import { logger } from "./logger.js";
 import * as stubs from "./stubs/index.js";
+import { downloadMedia } from "./services/media.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
 
 export const STATES = [
@@ -40,11 +41,24 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
   switch (job.state) {
     case "received": {
       const media = payload.data.parts.find((p) => p.type === "media");
-      if (!media) {
+      if (!media || media.type !== "media") {
         return { nextState: "failed", error: "no media in webhook payload" };
       }
-      const r2Key = await stubs.downloadMedia(job.id, media.url);
-      return { nextState: "downloaded", resultPatch: { r2Key, sourceUrl: media.url } };
+      const { key, size, contentType, publicUrl } = await downloadMedia(
+        job.id,
+        media.url,
+        media.filename,
+      );
+      return {
+        nextState: "downloaded",
+        resultPatch: {
+          r2Key: key,
+          r2PublicUrl: publicUrl,
+          mediaSize: size,
+          mediaContentType: contentType,
+          sourceUrl: media.url,
+        },
+      };
     }
 
     case "downloaded": {
