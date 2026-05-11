@@ -9,7 +9,7 @@ services:
   - type: web
     name: linq-video-editor
     runtime: node
-    plan: starter           # always-on. Free plan sleeps after 15min idle.
+    plan: free              # sleeps after 15min idle (~60s cold start on wake).
     region: ohio            # match your Postgres region for lowest latency.
     branch: main
     autoDeploy: true        # redeploy on every push to main.
