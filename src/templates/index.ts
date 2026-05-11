@@ -42,12 +42,16 @@ export type ShotstackEdit = {
   };
 };
 
+export type OutputSize = { width: number; height: number };
+
 export type Template = {
   id: string;
   description: string;
   music_options: MusicOption[];
   text_slot_count: number;
-  buildEdit: (clips: string[], choice: TemplateChoice) => ShotstackEdit;
+  // outputSize: if provided (probed from the first clip), the render matches
+  // the source video's orientation. If absent, defaults to 9:16 portrait.
+  buildEdit: (clips: string[], choice: TemplateChoice, outputSize?: OutputSize) => ShotstackEdit;
 };
 
 // Per-template clip duration when stitching multiple clips. Single clip uses
@@ -99,10 +103,11 @@ function titleTrack(
   };
 }
 
-function baseOutput(): ShotstackEdit["output"] {
-  // Explicit 9:16 portrait dimensions. Resolution presets force 16:9, so we
-  // skip `resolution` and `aspectRatio` and set `size` directly.
-  return { format: "mp4", size: { width: 720, height: 1280 }, fps: 30 };
+function baseOutput(outputSize?: OutputSize): ShotstackEdit["output"] {
+  // Match the source orientation when we probed it; otherwise default to
+  // 9:16 portrait. Resolution presets force 16:9, so we always use `size`.
+  const size = outputSize ?? { width: 720, height: 1280 };
+  return { format: "mp4", size, fps: 30 };
 }
 
 function commonBuildEdit(
@@ -111,6 +116,7 @@ function commonBuildEdit(
   perClipS: number,
   titleStyle: string,
   titleSize: string,
+  outputSize?: OutputSize,
 ): ShotstackEdit {
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (choice.text_overlays.length > 0) {
@@ -122,7 +128,7 @@ function commonBuildEdit(
       background: "#000000",
       tracks,
     },
-    output: baseOutput(),
+    output: baseOutput(outputSize),
   };
 }
 
@@ -136,8 +142,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_edm_drop", description: "EDM build-up with a massive drop" },
     ],
     text_slot_count: 2,
-    buildEdit: (clips, choice) =>
-      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large"),
+    buildEdit: (clips, choice, outputSize) =>
+      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large", outputSize),
   },
   {
     id: "tmpl_sad_emotional",
@@ -148,8 +154,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_lofi_rain", description: "Lofi beat with rain ambience" },
     ],
     text_slot_count: 1,
-    buildEdit: (clips, choice) =>
-      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium"),
+    buildEdit: (clips, choice, outputSize) =>
+      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium", outputSize),
   },
   {
     id: "tmpl_aesthetic_chill",
@@ -160,8 +166,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_synthwave", description: "Dreamy synthwave instrumental" },
     ],
     text_slot_count: 1,
-    buildEdit: (clips, choice) =>
-      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small"),
+    buildEdit: (clips, choice, outputSize) =>
+      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small", outputSize),
   },
   {
     id: "tmpl_funny_meme",
@@ -172,8 +178,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_funky_bass", description: "Funky bassline groove" },
     ],
     text_slot_count: 2,
-    buildEdit: (clips, choice) =>
-      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium"),
+    buildEdit: (clips, choice, outputSize) =>
+      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium", outputSize),
   },
 ];
 

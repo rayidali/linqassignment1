@@ -40,6 +40,81 @@ export async function submitRender(jobId: string, edit: unknown): Promise<string
   return data.response.id;
 }
 
+export type MediaDimensions = { width: number; height: number };
+
+function makeEven(n: number): number {
+  const r = Math.round(n);
+  return r % 2 === 0 ? r : r + 1;
+}
+
+// Scale so the longer side is at most maxLong, keep aspect, round to even
+// (Shotstack's encoder requires even dimensions).
+function clampDimensions(
+  width: number,
+  height: number,
+  maxLong = 1280,
+): MediaDimensions {
+  const longSide = Math.max(width, height);
+  const scale = longSide > maxLong ? maxLong / longSide : 1;
+  return {
+    width: Math.max(2, makeEven(width * scale)),
+    height: Math.max(2, makeEven(height * scale)),
+  };
+}
+
+// Probe a media URL via Shotstack's hosted FFprobe. Returns the *display*
+// dimensions (accounts for rotation metadata — phones often store a
+// landscape frame with a 90° rotation tag so it displays portrait).
+// Returns null on any failure — caller should fall back to a default.
+export async function probeMedia(jobId: string, url: string): Promise<MediaDimensions | null> {
+  try {
+    const res = await fetch(shotstackUrl(`probe/${encodeURIComponent(url)}`), {
+      headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
+    });
+    if (!res.ok) {
+      logger.warn({ jobId, url, status: res.status }, "probe request failed");
+      return null;
+    }
+    const data = (await res.json().catch(() => null)) as
+      | {
+          response?: {
+            metadata?: {
+              streams?: Array<{
+                codec_type?: string;
+                width?: number;
+                height?: number;
+                tags?: { rotate?: string };
+                side_data_list?: Array<{ rotation?: number }>;
+              }>;
+            };
+          };
+        }
+      | null;
+
+    const streams = data?.response?.metadata?.streams ?? [];
+    const video = streams.find((s) => s.codec_type === "video");
+    if (!video || !video.width || !video.height) {
+      logger.warn({ jobId, url }, "probe returned no usable video stream");
+      return null;
+    }
+
+    let { width, height } = video;
+    const rotateTag = video.tags?.rotate ? Number(video.tags.rotate) : 0;
+    const rotateSide = video.side_data_list?.find((s) => typeof s.rotation === "number")?.rotation ?? 0;
+    const rotation = ((rotateTag || rotateSide) % 360 + 360) % 360;
+    if (rotation === 90 || rotation === 270) {
+      [width, height] = [height, width];
+    }
+
+    const dims = clampDimensions(width, height);
+    logger.info({ jobId, url, raw: { w: video.width, h: video.height }, rotation, dims }, "probed media dimensions");
+    return dims;
+  } catch (err) {
+    logger.warn({ jobId, url, err: err instanceof Error ? err.message : String(err) }, "probe threw");
+    return null;
+  }
+}
+
 export type ShotstackStatus =
   | { status: "queued" | "fetching" | "rendering" | "saving" }
   | { status: "done"; url: string }

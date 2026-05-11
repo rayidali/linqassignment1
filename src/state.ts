@@ -1,7 +1,7 @@
 import { logger } from "./logger.js";
 import { downloadMedia } from "./services/media.js";
 import { matchTemplate } from "./services/match.js";
-import { submitRender, pollRender } from "./services/shotstack.js";
+import { submitRender, pollRender, probeMedia } from "./services/shotstack.js";
 import { uploadAttachment, sendVideoReply } from "./services/linq.js";
 import { getTemplate } from "./templates/index.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
@@ -65,9 +65,13 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
         sourceUrl: mediaParts[i]!.url,
         filename: mediaParts[i]!.filename,
       }));
+      // Probe the first clip to mirror its orientation in the output. Non-fatal
+      // — if it fails, baseOutput() falls back to 9:16 portrait.
+      const firstClipUrl = clips[0]?.r2PublicUrl ?? null;
+      const outputSize = firstClipUrl ? await probeMedia(job.id, firstClipUrl) : null;
       return {
         nextState: "downloaded",
-        resultPatch: { clips },
+        resultPatch: { clips, outputSize },
       };
     }
 
@@ -92,8 +96,9 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
       if (clipUrls.length === 0) {
         return { nextState: "failed", error: "no clip URLs available for render" };
       }
-      log.info({ clipCount: clipUrls.length, template: choice.template_id }, "building Shotstack edit");
-      const edit = tpl.buildEdit(clipUrls, choice);
+      const outputSize = (result.outputSize as { width: number; height: number } | null) ?? undefined;
+      log.info({ clipCount: clipUrls.length, template: choice.template_id, outputSize }, "building Shotstack edit");
+      const edit = tpl.buildEdit(clipUrls, choice, outputSize);
       const renderId = await submitRender(job.id, edit);
       return { nextState: "submitted", resultPatch: { renderId, nextPollAt: 0 } };
     }
