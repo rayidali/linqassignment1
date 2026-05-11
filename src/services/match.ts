@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { z } from "zod";
+// The SDK's zod helper internally uses zod/v4 (zod 3.25+ ships both APIs).
+// Importing from "zod/v4" here matches what zodOutputFormat expects — using
+// the default "zod" path gives the v3 API and the helper crashes with
+// "Cannot read properties of undefined (reading 'def')" on .toJSONSchema.
+import { z } from "zod/v4";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import {
@@ -68,13 +72,16 @@ ${JSON.stringify(templatesContext, null, 2)}`;
     max_tokens: 1024,
     system: SYSTEM,
     messages: [{ role: "user", content: userMessage }],
-    output_config: { format: zodOutputFormat(MatchSchema) },
+    // Cast: zodOutputFormat's TypeScript types reference zod v3 while its
+    // runtime uses zod/v4. Pass our v4 schema through; we re-parse below for
+    // type safety since parsed_output ends up as `any`.
+    output_config: { format: zodOutputFormat(MatchSchema as never) },
   });
 
-  const choice = response.parsed_output;
-  if (!choice) {
+  if (!response.parsed_output) {
     throw new Error("Anthropic response missing parsed_output");
   }
+  const choice = MatchSchema.parse(response.parsed_output);
 
   // Cross-check music belongs to the chosen template — the global enum lets
   // the LLM pick any music_id, but we want music tied to template choice.
