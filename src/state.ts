@@ -1,6 +1,7 @@
 import { logger } from "./logger.js";
 import * as stubs from "./stubs/index.js";
 import { downloadMedia } from "./services/media.js";
+import { matchTemplate } from "./services/match.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
 
 export const STATES = [
@@ -63,8 +64,8 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
 
     case "downloaded": {
       const text = payload.data.parts.find((p) => p.type === "text");
-      const prompt = text?.value ?? "";
-      const choice = await stubs.matchTemplate(job.id, prompt);
+      const prompt = text && text.type === "text" ? text.value : "";
+      const choice = await matchTemplate(job.id, prompt);
       return { nextState: "matched", resultPatch: { choice } };
     }
 

@@ -1,0 +1,107 @@
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { z } from "zod";
+import { env } from "../env.js";
+import { logger } from "../logger.js";
+import {
+  TEMPLATES,
+  ALL_TEMPLATE_IDS,
+  ALL_MUSIC_IDS,
+} from "../templates/index.js";
+import type { TemplateChoice } from "../schemas.js";
+
+let _client: Anthropic | null = null;
+
+function getClient(): Anthropic {
+  if (_client) return _client;
+  if (!env.ANTHROPIC_API_KEY) {
+    throw new Error("ANTHROPIC_API_KEY not set");
+  }
+  _client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  return _client;
+}
+
+const SYSTEM = `You are a video editing assistant for a TikTok-style video editor. The user texted a short video clip with an optional caption. Pick the template whose description best matches the mood of the caption, then pick a music track from that template's music_options and write text overlays.
+
+Rules:
+- The music_id MUST come from the chosen template's music_options. Never mix.
+- Write text overlays the user would actually want on screen. Each overlay <= 6 words, punchy. Match the count to the chosen template's text_slot_count.
+- timestamp is seconds from video start; first overlay at 0.
+- clip_order is just ["clip_1"] (single user clip for now).
+- If the caption is empty or unclear, default to tmpl_aesthetic_chill — that's the safest match for a generic short clip.`;
+
+// We use a fresh schema (stricter than the one in schemas.ts) to constrain
+// the LLM to known template_ids and music_ids via enum. Cross-checked below.
+const MatchSchema = z.object({
+  template_id: z.enum(ALL_TEMPLATE_IDS as [string, ...string[]]),
+  music_id: z.enum(ALL_MUSIC_IDS as [string, ...string[]]),
+  clip_order: z.array(z.string()),
+  text_overlays: z.array(
+    z.object({
+      text: z.string().max(80),
+      timestamp: z.number().min(0),
+    }),
+  ),
+});
+
+export async function matchTemplate(
+  jobId: string,
+  prompt: string,
+): Promise<TemplateChoice> {
+  const log = logger.child({ jobId });
+  log.info({ promptLength: prompt.length }, "matching template via Anthropic");
+
+  const templatesContext = TEMPLATES.map((t) => ({
+    id: t.id,
+    description: t.description,
+    music_options: t.music_options,
+    text_slot_count: t.text_slot_count,
+  }));
+
+  const userMessage = `User caption: ${prompt.trim() || "(none)"}
+
+Available templates (JSON):
+${JSON.stringify(templatesContext, null, 2)}`;
+
+  const response = await getClient().messages.parse({
+    model: "claude-opus-4-7",
+    max_tokens: 1024,
+    system: SYSTEM,
+    messages: [{ role: "user", content: userMessage }],
+    output_config: { format: zodOutputFormat(MatchSchema) },
+  });
+
+  const choice = response.parsed_output;
+  if (!choice) {
+    throw new Error("Anthropic response missing parsed_output");
+  }
+
+  // Cross-check music belongs to the chosen template — the global enum lets
+  // the LLM pick any music_id, but we want music tied to template choice.
+  const tpl = TEMPLATES.find((t) => t.id === choice.template_id);
+  if (!tpl) {
+    throw new Error(`LLM picked unknown template_id: ${choice.template_id}`);
+  }
+  if (!tpl.music_options.some((m) => m.id === choice.music_id)) {
+    log.warn(
+      {
+        template: choice.template_id,
+        chosenMusic: choice.music_id,
+        validForTemplate: tpl.music_options.map((m) => m.id),
+      },
+      "music_id not in chosen template's options — patching to first option",
+    );
+    choice.music_id = tpl.music_options[0]!.id;
+  }
+
+  log.info(
+    {
+      template: choice.template_id,
+      music: choice.music_id,
+      overlayCount: choice.text_overlays.length,
+    },
+    "template matched",
+  );
+
+  return choice as TemplateChoice;
+}
