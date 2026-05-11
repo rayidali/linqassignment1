@@ -23,11 +23,11 @@ export type ShotstackEdit = {
       clips: Array<{
         asset: Record<string, unknown>;
         start: number;
-        length: number | "auto";
+        length: number | "auto" | "end";
         transition?: { in?: string; out?: string };
         position?: string;
         offset?: { x?: number; y?: number };
-        fit?: string;
+        fit?: "cover" | "crop" | "contain" | "none";
       }>;
     }>;
   };
@@ -35,6 +35,10 @@ export type ShotstackEdit = {
     format: "mp4" | "gif" | "mp3";
     resolution?: "preview" | "mobile" | "sd" | "hd" | "1080";
     aspectRatio?: "16:9" | "9:16" | "1:1" | "4:5" | "4:3";
+    // Custom dimensions. When set, omit resolution/aspectRatio — Shotstack's
+    // resolution presets force a 16:9 frame regardless of aspectRatio.
+    size?: { width: number; height: number };
+    fps?: number;
   };
 };
 
@@ -55,12 +59,18 @@ const CHILL_CLIP_S = 4;
 const FUNNY_CLIP_S = 2.5;
 
 function videoTrack(clips: string[], perClipS: number): ShotstackEdit["timeline"]["tracks"][number] {
+  const single = clips.length === 1;
   return {
     clips: clips.map((url, i) => ({
       asset: { type: "video", src: url },
-      start: i * perClipS,
-      length: perClipS,
-      transition: i === 0 ? { in: "fade" } : { in: "fade", out: i === clips.length - 1 ? "fade" : undefined },
+      // Single clip: play it in full ("auto" = source's natural length).
+      // Multi-clip: trim each to perClipS and sequence them — that's the
+      // montage behavior, and Shotstack needs explicit starts to stitch.
+      start: single ? 0 : i * perClipS,
+      length: single ? "auto" : perClipS,
+      // "cover" fills the portrait frame, cropping a landscape source.
+      fit: "cover",
+      ...(single ? {} : { transition: { in: "fade", out: "fade" } }),
     })),
   };
 }
@@ -69,7 +79,6 @@ function titleTrack(
   overlays: TemplateChoice["text_overlays"],
   style: string,
   size: string,
-  totalLengthS: number,
 ): ShotstackEdit["timeline"]["tracks"][number] {
   return {
     clips: overlays.map((o) => ({
@@ -81,7 +90,9 @@ function titleTrack(
         position: "center",
         color: "#ffffff",
       },
-      start: Math.max(0, Math.min(o.timestamp, totalLengthS - 1)),
+      // Clamp to a safe window — we may not know the final video length
+      // (single clip uses "auto").
+      start: Math.max(0, Math.min(o.timestamp, 8)),
       length: 2.5,
       transition: { in: "fade", out: "fade" },
     })),
@@ -89,7 +100,9 @@ function titleTrack(
 }
 
 function baseOutput(): ShotstackEdit["output"] {
-  return { format: "mp4", resolution: "sd", aspectRatio: "9:16" };
+  // Explicit 9:16 portrait dimensions. Resolution presets force 16:9, so we
+  // skip `resolution` and `aspectRatio` and set `size` directly.
+  return { format: "mp4", size: { width: 720, height: 1280 }, fps: 30 };
 }
 
 function commonBuildEdit(
@@ -99,10 +112,9 @@ function commonBuildEdit(
   titleStyle: string,
   titleSize: string,
 ): ShotstackEdit {
-  const totalLengthS = clips.length * perClipS;
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (choice.text_overlays.length > 0) {
-    tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize, totalLengthS));
+    tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize));
   }
   tracks.push(videoTrack(clips, perClipS));
   return {
