@@ -43,24 +43,31 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
 
   switch (job.state) {
     case "received": {
-      const media = payload.data.parts.find((p) => p.type === "media");
-      if (!media || media.type !== "media") {
+      type MediaPart = Extract<
+        LinqWebhookPayload["data"]["parts"][number],
+        { type: "media" }
+      >;
+      const mediaParts: MediaPart[] = payload.data.parts.filter(
+        (p): p is MediaPart => p.type === "media",
+      );
+      if (mediaParts.length === 0) {
         return { nextState: "failed", error: "no media in webhook payload" };
       }
-      const { key, size, contentType, publicUrl } = await downloadMedia(
-        job.id,
-        media.url,
-        media.filename,
+      log.info({ clipCount: mediaParts.length }, "downloading all media parts");
+      const downloads = await Promise.all(
+        mediaParts.map((p) => downloadMedia(job.id, p.url, p.filename)),
       );
+      const clips = downloads.map((d, i) => ({
+        r2Key: d.key,
+        r2PublicUrl: d.publicUrl,
+        size: d.size,
+        contentType: d.contentType,
+        sourceUrl: mediaParts[i]!.url,
+        filename: mediaParts[i]!.filename,
+      }));
       return {
         nextState: "downloaded",
-        resultPatch: {
-          r2Key: key,
-          r2PublicUrl: publicUrl,
-          mediaSize: size,
-          mediaContentType: contentType,
-          sourceUrl: media.url,
-        },
+        resultPatch: { clips },
       };
     }
 
@@ -77,11 +84,16 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
       if (!tpl) {
         return { nextState: "failed", error: `unknown template_id: ${choice.template_id}` };
       }
-      const clipUrl = result.r2PublicUrl as string | undefined;
-      if (!clipUrl) {
-        return { nextState: "failed", error: "missing r2PublicUrl for clip" };
+      type ClipResult = { r2PublicUrl: string | null };
+      const clips = (result.clips as ClipResult[] | undefined) ?? [];
+      const clipUrls = clips
+        .map((c) => c.r2PublicUrl)
+        .filter((u): u is string => typeof u === "string" && u.length > 0);
+      if (clipUrls.length === 0) {
+        return { nextState: "failed", error: "no clip URLs available for render" };
       }
-      const edit = tpl.buildEdit([clipUrl], choice);
+      log.info({ clipCount: clipUrls.length, template: choice.template_id }, "building Shotstack edit");
+      const edit = tpl.buildEdit(clipUrls, choice);
       const renderId = await submitRender(job.id, edit);
       return { nextState: "submitted", resultPatch: { renderId, nextPollAt: 0 } };
     }

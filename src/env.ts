@@ -24,6 +24,8 @@ const EnvSchema = z.object({
   R2_SECRET_ACCESS_KEY: optionalString(),
   R2_BUCKET: optionalString(),
   R2_PUBLIC_BASE_URL: optionalUrl(),
+
+  JAMENDO_CLIENT_ID: optionalString(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
