@@ -1,8 +1,8 @@
 import { logger } from "./logger.js";
-import * as stubs from "./stubs/index.js";
 import { downloadMedia } from "./services/media.js";
 import { matchTemplate } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
+import { uploadAttachment, sendVideoReply } from "./services/linq.js";
 import { getTemplate } from "./templates/index.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
 
@@ -119,14 +119,14 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
 
     case "rendered": {
       const videoUrl = result.videoUrl as string;
-      const attachmentId = await stubs.uploadToLinq(job.id, videoUrl);
+      const attachmentId = await uploadAttachment(job.id, videoUrl, "edited.mp4");
       return { nextState: "uploaded", resultPatch: { attachmentId } };
     }
 
     case "uploaded": {
       const chatId = payload.data.chat.id;
       const attachmentId = result.attachmentId as string;
-      await stubs.sendReply(job.id, chatId, attachmentId);
+      await sendVideoReply(job.id, chatId, attachmentId);
       return { nextState: "delivered" };
     }
 

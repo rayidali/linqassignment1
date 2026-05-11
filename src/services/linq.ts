@@ -1,0 +1,132 @@
+import { env } from "../env.js";
+import { logger } from "../logger.js";
+
+const LINQ_BASE = "https://api.linqapp.com/api/partner/v3";
+
+function bearer(): string {
+  if (!env.LINQ_API_KEY) throw new Error("LINQ_API_KEY not set");
+  return `Bearer ${env.LINQ_API_KEY}`;
+}
+
+type CreateAttachmentResponse = {
+  attachment_id: string;
+  upload_url: string;
+  http_method?: string;
+  expires_at?: string;
+  required_headers?: Record<string, string>;
+};
+
+// Two-step flow: POST /v3/attachments returns a presigned upload URL +
+// attachment_id; we then PUT the bytes to that URL. The attachment_id is what
+// we pass to send-message later.
+export async function uploadAttachment(
+  jobId: string,
+  sourceUrl: string,
+  filename: string,
+): Promise<string> {
+  const log = logger.child({ jobId });
+
+  log.info({ sourceUrl }, "fetching render output for re-upload");
+  const fetchRes = await fetch(sourceUrl);
+  if (!fetchRes.ok || !fetchRes.body) {
+    throw new Error(
+      `fetch render output failed: ${fetchRes.status} ${fetchRes.statusText}`,
+    );
+  }
+  const contentType = fetchRes.headers.get("content-type") ?? "video/mp4";
+  const buffer = Buffer.from(await fetchRes.arrayBuffer());
+  const sizeBytes = buffer.length;
+  log.info({ sizeBytes, contentType }, "render output downloaded into memory");
+
+  // Step 1: POST /v3/attachments — request a presigned upload URL.
+  const createRes = await fetch(`${LINQ_BASE}/attachments`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: bearer(),
+    },
+    body: JSON.stringify({
+      filename,
+      content_type: contentType,
+      size_bytes: sizeBytes,
+    }),
+  });
+  if (!createRes.ok) {
+    const body = await createRes.text();
+    throw new Error(`Linq attachment create failed: ${createRes.status} ${body}`);
+  }
+  const created = (await createRes.json()) as CreateAttachmentResponse;
+  log.info({ attachmentId: created.attachment_id }, "Linq attachment slot created");
+
+  // Step 2: PUT bytes to the presigned URL.
+  const method = (created.http_method ?? "PUT").toUpperCase();
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    ...(created.required_headers ?? {}),
+  };
+  const uploadRes = await fetch(created.upload_url, {
+    method,
+    headers,
+    body: buffer,
+  });
+  if (!uploadRes.ok) {
+    const body = await uploadRes.text().catch(() => "");
+    throw new Error(`Linq attachment upload failed: ${uploadRes.status} ${body}`);
+  }
+  log.info({ attachmentId: created.attachment_id }, "Linq attachment uploaded");
+
+  return created.attachment_id;
+}
+
+// Send a media-only reply (the rendered video) to a chat.
+export async function sendVideoReply(
+  jobId: string,
+  chatId: string,
+  attachmentId: string,
+): Promise<void> {
+  const log = logger.child({ jobId, chatId });
+  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: bearer(),
+    },
+    body: JSON.stringify({
+      message: {
+        parts: [{ type: "media", attachment_id: attachmentId }],
+        idempotency_key: jobId,
+      },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Linq send video reply failed: ${res.status} ${body}`);
+  }
+  log.info({ attachmentId }, "Linq video reply sent");
+}
+
+// Send a text-only reply (used by the chatbot mode in slice 4d).
+export async function sendTextReply(
+  chatId: string,
+  text: string,
+  idempotencyKey: string,
+): Promise<void> {
+  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: bearer(),
+    },
+    body: JSON.stringify({
+      message: {
+        parts: [{ type: "text", value: text }],
+        idempotency_key: idempotencyKey,
+      },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Linq send text reply failed: ${res.status} ${body}`);
+  }
+  logger.info({ chatId, textPreview: text.slice(0, 60) }, "Linq text reply sent");
+}
