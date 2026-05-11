@@ -72,8 +72,9 @@ function videoTrack(clips: string[], perClipS: number): ShotstackEdit["timeline"
       // montage behavior, and Shotstack needs explicit starts to stitch.
       start: single ? 0 : i * perClipS,
       length: single ? "auto" : perClipS,
-      // "cover" fills the portrait frame, cropping a landscape source.
-      fit: "cover",
+      // "crop" = scale to fill the frame, preserving aspect ratio, cropping
+      // overflow. (NOT "cover" — that one stretches/distorts to fit.)
+      fit: "crop",
       ...(single ? {} : { transition: { in: "fade", out: "fade" } }),
     })),
   };
