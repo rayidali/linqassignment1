@@ -1,18 +1,41 @@
-// Starter template set. The LLM picks one of these based on the user's caption.
-// Add/edit freely — the matcher reads `description` for each template, so the
-// quality of descriptions directly drives match quality.
+import type { TemplateChoice } from "../schemas.js";
+
+// Starter template set. The LLM picks one based on the user's caption.
+// Add/edit freely — the matcher reads `description` for each template, so
+// description quality directly drives match quality.
 //
-// What makes a good description:
-// - 1-2 sentences capturing mood, pace, visual style
-// - End with "Pick when …" listing trigger phrases / situations
-// - Differentiate clearly from the other templates (no overlap)
-//
-// Music IDs are placeholders — we'll wire them to real Shotstack audio URLs
-// in slice 3 (render). For now they're just labels the matcher reasons over.
+// Each template's buildEdit() returns Shotstack edit JSON. The function
+// accepts an ARRAY of clip URLs so multi-clip stitching works by construction
+// (slice 4 will pass [url1, url2, …] when the iMessage has multiple media).
 
 export type MusicOption = {
   id: string;
   description: string;
+};
+
+// Loose Shotstack edit type. Shotstack's API accepts much more; we only
+// model the fields we actually emit. See https://shotstack.io/docs/api/
+export type ShotstackEdit = {
+  timeline: {
+    background?: string;
+    soundtrack?: { src: string; effect?: string };
+    tracks: Array<{
+      clips: Array<{
+        asset: Record<string, unknown>;
+        start: number;
+        length: number | "auto";
+        transition?: { in?: string; out?: string };
+        position?: string;
+        offset?: { x?: number; y?: number };
+        fit?: string;
+      }>;
+    }>;
+  };
+  output: {
+    format: "mp4" | "gif" | "mp3";
+    resolution?: "preview" | "mobile" | "sd" | "hd" | "1080";
+    aspectRatio?: "16:9" | "9:16" | "1:1" | "4:5" | "4:3";
+  };
 };
 
 export type Template = {
@@ -20,7 +43,76 @@ export type Template = {
   description: string;
   music_options: MusicOption[];
   text_slot_count: number;
+  buildEdit: (clips: string[], choice: TemplateChoice) => ShotstackEdit;
 };
+
+// Per-template clip duration when stitching multiple clips. Single clip uses
+// the same value (user clip gets trimmed to this length). Total render
+// duration = clipDuration * clipCount, plus a small tail for the last overlay.
+const HYPE_CLIP_S = 3;
+const SAD_CLIP_S = 5;
+const CHILL_CLIP_S = 4;
+const FUNNY_CLIP_S = 2.5;
+
+function videoTrack(clips: string[], perClipS: number): ShotstackEdit["timeline"]["tracks"][number] {
+  return {
+    clips: clips.map((url, i) => ({
+      asset: { type: "video", src: url },
+      start: i * perClipS,
+      length: perClipS,
+      transition: i === 0 ? { in: "fade" } : { in: "fade", out: i === clips.length - 1 ? "fade" : undefined },
+    })),
+  };
+}
+
+function titleTrack(
+  overlays: TemplateChoice["text_overlays"],
+  style: string,
+  size: string,
+  totalLengthS: number,
+): ShotstackEdit["timeline"]["tracks"][number] {
+  return {
+    clips: overlays.map((o) => ({
+      asset: {
+        type: "title",
+        text: o.text,
+        style,
+        size,
+        position: "center",
+        color: "#ffffff",
+      },
+      start: Math.max(0, Math.min(o.timestamp, totalLengthS - 1)),
+      length: 2.5,
+      transition: { in: "fade", out: "fade" },
+    })),
+  };
+}
+
+function baseOutput(): ShotstackEdit["output"] {
+  return { format: "mp4", resolution: "sd", aspectRatio: "9:16" };
+}
+
+function commonBuildEdit(
+  clips: string[],
+  choice: TemplateChoice,
+  perClipS: number,
+  titleStyle: string,
+  titleSize: string,
+): ShotstackEdit {
+  const totalLengthS = clips.length * perClipS;
+  const tracks: ShotstackEdit["timeline"]["tracks"] = [];
+  if (choice.text_overlays.length > 0) {
+    tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize, totalLengthS));
+  }
+  tracks.push(videoTrack(clips, perClipS));
+  return {
+    timeline: {
+      background: "#000000",
+      tracks,
+    },
+    output: baseOutput(),
+  };
+}
 
 export const TEMPLATES: Template[] = [
   {
@@ -32,6 +124,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_edm_drop", description: "EDM build-up with a massive drop" },
     ],
     text_slot_count: 2,
+    buildEdit: (clips, choice) =>
+      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large"),
   },
   {
     id: "tmpl_sad_emotional",
@@ -42,6 +136,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_lofi_rain", description: "Lofi beat with rain ambience" },
     ],
     text_slot_count: 1,
+    buildEdit: (clips, choice) =>
+      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium"),
   },
   {
     id: "tmpl_aesthetic_chill",
@@ -52,6 +148,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_synthwave", description: "Dreamy synthwave instrumental" },
     ],
     text_slot_count: 1,
+    buildEdit: (clips, choice) =>
+      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small"),
   },
   {
     id: "tmpl_funny_meme",
@@ -62,6 +160,8 @@ export const TEMPLATES: Template[] = [
       { id: "music_funky_bass", description: "Funky bassline groove" },
     ],
     text_slot_count: 2,
+    buildEdit: (clips, choice) =>
+      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium"),
   },
 ];
 

@@ -2,6 +2,8 @@ import { logger } from "./logger.js";
 import * as stubs from "./stubs/index.js";
 import { downloadMedia } from "./services/media.js";
 import { matchTemplate } from "./services/match.js";
+import { submitRender, pollRender } from "./services/shotstack.js";
+import { getTemplate } from "./templates/index.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
 
 export const STATES = [
@@ -71,20 +73,36 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
 
     case "matched": {
       const choice = result.choice as TemplateChoice;
-      const renderId = await stubs.submitRender(job.id, choice);
-      return { nextState: "submitted", resultPatch: { renderId } };
+      const tpl = getTemplate(choice.template_id);
+      if (!tpl) {
+        return { nextState: "failed", error: `unknown template_id: ${choice.template_id}` };
+      }
+      const clipUrl = result.r2PublicUrl as string | undefined;
+      if (!clipUrl) {
+        return { nextState: "failed", error: "missing r2PublicUrl for clip" };
+      }
+      const edit = tpl.buildEdit([clipUrl], choice);
+      const renderId = await submitRender(job.id, edit);
+      return { nextState: "submitted", resultPatch: { renderId, nextPollAt: 0 } };
     }
 
     case "submitted": {
       const renderId = result.renderId as string;
-      const status = await stubs.pollRender(job.id, renderId);
-      if (status.status === "rendering") {
+      // Throttle Shotstack polls — worker ticks every 1s but renders take
+      // 10-60s; polling every tick would hammer the rate limit.
+      const now = Date.now();
+      const nextPollAt = (result.nextPollAt as number | undefined) ?? 0;
+      if (now < nextPollAt) {
         return { nextState: "submitted" };
+      }
+      const status = await pollRender(job.id, renderId);
+      if (status.status === "done") {
+        return { nextState: "rendered", resultPatch: { videoUrl: status.url } };
       }
       if (status.status === "failed") {
         return { nextState: "failed", error: status.error };
       }
-      return { nextState: "rendered", resultPatch: { videoUrl: status.url } };
+      return { nextState: "submitted", resultPatch: { nextPollAt: now + 5000 } };
     }
 
     case "rendered": {
