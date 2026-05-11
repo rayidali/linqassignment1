@@ -13,7 +13,7 @@ services:
     region: ohio            # match your Postgres region for lowest latency.
     branch: main
     autoDeploy: true        # redeploy on every push to main.
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: npx prisma migrate deploy && npm start
     healthCheckPath: /healthz
     envVars:
