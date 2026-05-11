@@ -39,13 +39,26 @@ Relative imports must end in `.js` (ESM/NodeNext rule), even though source files
 
 State names are **past-tense** — each describes what's been completed.
 
-Order: `received → downloaded → matched → submitted → rendered → uploaded → delivered`
+Order: `received → downloaded → ingesting → ingested → matched → submitted → rendered → uploaded → delivered`
 
-Terminal states: `delivered` (success), `failed` (error path).
+| State | What advance() does | Next |
+|---|---|---|
+| `received` | download all media parts → R2 (parallel) | `downloaded` |
+| `downloaded` | submit all R2 clips to Shotstack Ingest | `ingesting` |
+| `ingesting` | poll ingest status; self-loop until all `ready` | `ingested` |
+| `ingested` | match template via Anthropic | `matched` |
+| `matched` | build Shotstack edit (using ingested URLs + first clip's dims for output size), submit render | `submitted` |
+| `submitted` | poll render status; self-loop until `done` | `rendered` |
+| `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
+| `uploaded` | send video reply via Linq | `delivered` |
 
-`submitted` is a self-loop while polling Shotstack — stays `submitted` until the render finishes, then transitions to `rendered`.
+Terminal states: `delivered` (success), `failed` (error path, `error` populated).
 
-`advance(job)` is defined in `src/state.ts`. Pure async function: takes the job, runs the side effect for the current state, returns the next state plus a result patch.
+Self-loop / throttled-poll states: `ingesting` and `submitted` — they re-claim each tick but only hit the external API every 5s (gated by `result.nextPollAt`).
+
+**Why `ingesting` exists:** Shotstack's edit API does NOT auto-apply rotation metadata (iPhone portrait videos store landscape frames + a rotate flag). The Ingest API transcodes the raw upload, bakes in the rotation, normalizes encoding, and returns reliable display dimensions which we use to size the output (so the render matches the source orientation).
+
+`advance(job)` is in `src/state.ts`. Pure async: takes the job, runs the side effect for the current state, returns next state + a result patch (shallow-merged into `job.result`).
 
 ## Hard rules
 

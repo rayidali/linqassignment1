@@ -1,11 +1,15 @@
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 
-// Sandbox env. Switch to "v1" for production.
+// Sandbox env. Switch to "v1" / production for the edit API and "v1" for ingest.
 const SHOTSTACK_ENV = "stage";
 
 function shotstackUrl(path: string): string {
   return `https://api.shotstack.io/${SHOTSTACK_ENV}/${path}`;
+}
+
+function ingestUrl(path: string): string {
+  return `https://api.shotstack.io/ingest/${SHOTSTACK_ENV}/${path}`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -113,6 +117,79 @@ export async function probeMedia(jobId: string, url: string): Promise<MediaDimen
     logger.warn({ jobId, url, err: err instanceof Error ? err.message : String(err) }, "probe threw");
     return null;
   }
+}
+
+// --- Ingest API ---
+// Transcodes a source URL into a normalized Shotstack-hosted MP4. This bakes
+// in rotation metadata (iPhone portrait videos store landscape frames + a
+// rotate flag that the edit API does NOT auto-apply) and gives reliable
+// display dimensions.
+
+export async function ingestSource(jobId: string, sourceUrl: string): Promise<string> {
+  logger.info({ jobId, sourceUrl }, "submitting source to Shotstack Ingest");
+  const res = await fetch(ingestUrl("sources"), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": env.SHOTSTACK_API_KEY ?? "",
+    },
+    body: JSON.stringify({ url: sourceUrl }),
+  });
+  const data = (await res.json().catch(() => null)) as
+    | { data?: { id?: string } }
+    | null;
+  if (!res.ok || !data?.data?.id) {
+    throw new Error(`Shotstack ingest submit failed: ${res.status} ${JSON.stringify(data)}`);
+  }
+  logger.info({ jobId, sourceId: data.data.id }, "Shotstack ingest queued");
+  return data.data.id;
+}
+
+export type IngestStatus =
+  | { status: "queued" | "importing" }
+  | { status: "ready"; url: string; width: number; height: number; duration?: number }
+  | { status: "failed" | "deleted"; error?: string };
+
+export async function getIngestStatus(jobId: string, sourceId: string): Promise<IngestStatus> {
+  const res = await fetch(ingestUrl(`sources/${sourceId}`), {
+    headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
+  });
+  const data = (await res.json().catch(() => null)) as
+    | {
+        data?: {
+          attributes?: {
+            status?: string;
+            source?: string;
+            width?: number;
+            height?: number;
+            duration?: number;
+            error?: string;
+          };
+        };
+      }
+    | null;
+  const attrs = data?.data?.attributes;
+  if (!res.ok || !attrs?.status) {
+    throw new Error(`Shotstack ingest status failed: ${res.status} ${JSON.stringify(data)}`);
+  }
+  const status = attrs.status;
+  logger.info({ jobId, sourceId, ingestStatus: status }, "polled Shotstack ingest");
+  if (status === "ready") {
+    if (!attrs.source || !attrs.width || !attrs.height) {
+      throw new Error(`Shotstack ingest ready but missing source/dims: ${JSON.stringify(attrs)}`);
+    }
+    return {
+      status: "ready",
+      url: attrs.source,
+      width: attrs.width,
+      height: attrs.height,
+      duration: attrs.duration,
+    };
+  }
+  if (status === "failed" || status === "deleted") {
+    return { status, error: attrs.error };
+  }
+  return { status: status as "queued" | "importing" };
 }
 
 export type ShotstackStatus =
