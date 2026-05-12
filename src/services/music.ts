@@ -7,9 +7,6 @@ import type { MusicSpec } from "../schemas.js";
 const JAMENDO_API = "https://api.jamendo.com/v3.0";
 const MAX_TRACK_BYTES = 20 * 1024 * 1024;
 
-// cache key -> resolved R2 URL. Only successes are cached.
-const resolved = new Map<string, string>();
-
 // Hand-picked track IDs for cases where Jamendo's default ordering isn't the
 // obvious choice (e.g. we want the actual "Jingle Bells" carol for christmas,
 // not a generic christmas-tagged instrumental). Keyed by a tag name; checked
@@ -37,11 +34,16 @@ function tempoToSpeed(tempo: MusicSpec["tempo"]): string | null {
   return null;
 }
 
-function buildUrl(extra: Record<string, string>): string {
+// How many candidates to pull for a tag/search query before picking one — a
+// random choice among the top-N gives variety (no more "always the same most-
+// popular track for these tags"). Curated-ID lookups stay at limit 1.
+const CANDIDATE_POOL = 20;
+
+function buildUrl(extra: Record<string, string>, limit = 1): string {
   const url = new URL(`${JAMENDO_API}/tracks/`);
   url.searchParams.set("client_id", env.JAMENDO_CLIENT_ID ?? "");
   url.searchParams.set("format", "json");
-  url.searchParams.set("limit", "1");
+  url.searchParams.set("limit", String(limit));
   url.searchParams.set("audioformat", "mp32");
   url.searchParams.set("vocalinstrumental", "instrumental");
   url.searchParams.set("order", "popularity_total");
@@ -49,12 +51,20 @@ function buildUrl(extra: Record<string, string>): string {
   return url.toString();
 }
 
-async function fetchTrack(u: string): Promise<JamendoTrack | null> {
+async function fetchTracks(u: string): Promise<JamendoTrack[]> {
   const res = await fetch(u);
-  if (!res.ok) return null;
+  if (!res.ok) return [];
   const data = (await res.json().catch(() => null)) as { results?: JamendoTrack[] } | null;
-  const t = data?.results?.[0];
-  return t && t.audio && t.id ? t : null;
+  return (data?.results ?? []).filter((t): t is JamendoTrack => Boolean(t?.audio && t?.id));
+}
+
+async function fetchTrack(u: string): Promise<JamendoTrack | null> {
+  return (await fetchTracks(u))[0] ?? null;
+}
+
+function pickOne(tracks: JamendoTrack[]): JamendoTrack | null {
+  if (tracks.length === 0) return null;
+  return tracks[Math.floor(Math.random() * tracks.length)] ?? tracks[0] ?? null;
 }
 
 function curatedTrackId(spec: MusicSpec): string | undefined {
@@ -83,37 +93,31 @@ async function findTrack(spec: MusicSpec): Promise<JamendoTrack | null> {
   const search = spec.freetext.trim();
 
   // Progressively loosen: tags+search+speed+acoustic → tags+search → search → fuzzytags.
+  // Each query pulls a pool of candidates and we pick one at random for variety.
   if (tags && (search || speed || ae)) {
-    const t = await fetchTrack(buildUrl({ tags, search, speed, acousticelectric: ae }));
+    const t = pickOne(await fetchTracks(buildUrl({ tags, search, speed, acousticelectric: ae }, CANDIDATE_POOL)));
     if (t) return t;
   }
   if (tags) {
-    const t = await fetchTrack(buildUrl({ tags, search }));
+    const t = pickOne(await fetchTracks(buildUrl({ tags, search }, CANDIDATE_POOL)));
     if (t) return t;
   }
   if (search) {
-    const t = await fetchTrack(buildUrl({ search }));
+    const t = pickOne(await fetchTracks(buildUrl({ search }, CANDIDATE_POOL)));
     if (t) return t;
   }
   if (tags) {
-    return fetchTrack(buildUrl({ fuzzytags: tags }));
+    return pickOne(await fetchTracks(buildUrl({ fuzzytags: tags }, CANDIDATE_POOL)));
   }
   return null;
 }
 
-function cacheKey(spec: MusicSpec): string {
-  return `${[...spec.tags].sort().join(",")}|${spec.freetext.toLowerCase().trim()}|${spec.tempo}|${spec.acoustic_or_electric}`;
-}
-
 // Resolves a music spec to a playable R2-hosted MP3 URL: finds a royalty-free
 // instrumental on Jamendo (curated track → tag filter → free-text → fuzzy
-// tags), downloads it and re-hosts on R2 so Shotstack can fetch it reliably.
-// Cached. Returns null on any failure (caller falls back).
+// tags; non-curated queries pick at random from a candidate pool for variety),
+// downloads it and re-hosts on R2 so Shotstack can fetch it reliably. Returns
+// null on any failure (caller falls back to a hardcoded track).
 export async function resolveMusicUrl(jobId: string, spec: MusicSpec): Promise<string | null> {
-  const key = cacheKey(spec);
-  const cached = resolved.get(key);
-  if (cached) return cached;
-
   try {
     const track = await findTrack(spec);
     if (!track || !track.audio || !track.id) {
@@ -141,7 +145,6 @@ export async function resolveMusicUrl(jobId: string, spec: MusicSpec): Promise<s
     }).done();
     const url = r2PublicUrl(r2Key);
     if (!url) return null;
-    resolved.set(key, url);
     logger.info({ jobId, r2Key, bytes: buf.length }, "music track re-hosted on R2");
     return url;
   } catch (err) {

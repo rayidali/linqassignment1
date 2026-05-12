@@ -72,6 +72,9 @@ export const TextOverlay = z.object({
 });
 export type TextOverlay = z.infer<typeof TextOverlay>;
 
+export const PACE_IDS = ["very_fast", "fast", "medium", "slow", "very_slow"] as const;
+export type PaceId = (typeof PACE_IDS)[number];
+
 export const EditPlan = z.object({
   // A short, casual confirmation of what's being made — texted to the user
   // (gen-z styled, no dashes/emoji) and logged. e.g. "doing a hype gym edit w bold text"
@@ -83,6 +86,10 @@ export const EditPlan = z.object({
   style: z.enum(STYLE_IDS),
   music: MusicSpec,
   keep_original_audio: z.boolean(),
+  // Cuts-per-minute feel for multi-clip montages — maps to a per-clip duration
+  // (very_fast ≈ 1s … very_slow ≈ 6.5s). Ignored for single-clip edits, where
+  // `speed` does the pacing instead.
+  pace: z.enum(PACE_IDS),
   speed: z.enum(["slow", "normal", "fast"]), // "slow" ≈ 0.5x; only applied to single-clip edits
   color_filter: z.enum(["none", "vibrant", "muted", "bw", "dramatic"]),
   transition: z.enum(["cut", "fade", "zoom"]), // between clips; multi-clip only

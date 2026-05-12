@@ -1,42 +1,45 @@
-import type { EditPlan, StyleId, TextOverlay, MusicSpec } from "../schemas.js";
+import type { EditPlan, StyleId, PaceId, TextOverlay, MusicSpec } from "../schemas.js";
 
-// "Style presets" provide the rendering scaffold for each base style: how long
-// each clip plays in a multi-clip montage, the overlay font size relative to
-// the frame, and a fallback music spec used if the plan's music is empty. The
-// mastermind matcher picks a style and then layers the rest of the plan
-// (transition, color filter, speed, music, per-overlay styling) on top.
+// "Style presets" provide the rendering scaffold for each base style: the
+// overlay font size relative to the frame, and a fallback music spec used if
+// the plan's music is empty. Pacing (clip duration) is a separate plan field
+// (`pace`) the matcher sets directly — see PACE_TO_CLIP_SECONDS below.
 type StylePreset = {
-  clipDurationS: number;
   fontScale: number; // × min(frameW, frameH)
   fallbackMusic: MusicSpec;
 };
 
 export const STYLE_PRESETS: Record<StyleId, StylePreset> = {
   hype: {
-    clipDurationS: 3,
     fontScale: 0.085,
-    fallbackMusic: { tags: ["energetic", "electronic"], freetext: "high energy hype", tempo: "fast", acoustic_or_electric: "any" },
+    fallbackMusic: { tags: ["rock", "energetic", "motivational"], freetext: "high energy workout rock", tempo: "fast", acoustic_or_electric: "electric" },
   },
   sad: {
-    clipDurationS: 5,
     fontScale: 0.05,
     fallbackMusic: { tags: ["sad", "classical"], freetext: "emotional piano", tempo: "slow", acoustic_or_electric: "acoustic" },
   },
   chill: {
-    clipDurationS: 4,
     fontScale: 0.045,
     fallbackMusic: { tags: ["chillout", "lounge"], freetext: "mellow lofi chill beats", tempo: "medium", acoustic_or_electric: "any" },
   },
   funny: {
-    clipDurationS: 2.5,
     fontScale: 0.08,
-    fallbackMusic: { tags: ["funk", "happy"], freetext: "funny quirky upbeat", tempo: "medium", acoustic_or_electric: "any" },
+    fallbackMusic: { tags: ["happy", "groovy"], freetext: "quirky playful upbeat", tempo: "medium", acoustic_or_electric: "any" },
   },
   cinematic: {
-    clipDurationS: 6,
     fontScale: 0.04,
     fallbackMusic: { tags: ["cinematic", "epic", "soundtrack"], freetext: "cinematic epic orchestral", tempo: "medium", acoustic_or_electric: "any" },
   },
+};
+
+// `pace` → seconds each clip plays in a multi-clip montage. Single-clip edits
+// ignore this (the clip plays its full length, optionally re-timed by `speed`).
+export const PACE_TO_CLIP_SECONDS: Record<PaceId, number> = {
+  very_fast: 1.0,
+  fast: 1.7,
+  medium: 2.8,
+  slow: 4.5,
+  very_slow: 6.5,
 };
 
 // Loose Shotstack edit type. See https://shotstack.io/docs/api/
@@ -184,12 +187,20 @@ export function buildEdit(
   const preset = STYLE_PRESETS[plan.style];
   const size = outputSize ?? { width: 1080, height: 1920 };
 
+  // Per-clip duration for the montage. With only 2 clips, hold a 2s floor so a
+  // very_fast pace doesn't produce a sub-4s blink. (1 clip ignores this — it
+  // plays its full length.)
+  const perClipSeconds = Math.max(
+    PACE_TO_CLIP_SECONDS[plan.pace],
+    clips.length <= 2 ? 2.0 : 0,
+  );
+
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (plan.text_overlays.length > 0) {
     tracks.push(overlayTrack(plan.text_overlays, size.width, size.height, preset.fontScale));
   }
   tracks.push(
-    videoTrack(clips, preset.clipDurationS, {
+    videoTrack(clips, perClipSeconds, {
       mute: !plan.keep_original_audio,
       sourceVolume: 0.3, // when keeping original audio, duck it under the music
       filter: mapColorFilter(plan.color_filter),

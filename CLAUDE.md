@@ -55,15 +55,16 @@ The webhook also dedups on `Job.externalId` (a `findUnique` before `checkAccess`
 `planEdit` is the brain. Given the user's caption + clip count (+ a clarification answer on a re-run), Claude Opus 4.7 returns an `EditPlan` (see `schemas.ts`):
 - `confirmation` — short casual line texted to the user ("doing a hype gym edit w bold text"), gen-z styled (scrubbed of dashes/emoji)
 - `needs_clarification` + `clarification_question` — set only when the request is genuinely too vague (e.g. no caption)
-- `style` — `hype` | `sad` | `chill` | `funny` | `cinematic` (the rendering scaffold)
-- `music_query` — Jamendo search query (always set; derived from explicit request, theme, or style)
+- `style` — `hype` | `sad` | `chill` | `funny` | `cinematic` (the rendering scaffold — sets text size + a music fallback)
+- `music` — a structured `MusicSpec` (see below): `{ tags, freetext, tempo, acoustic_or_electric }`
 - `keep_original_audio` — true only if the user asks; else the music plays and source is muted
+- `pace` — `very_fast` | `fast` | `medium` | `slow` | `very_slow` (cuts-per-minute in a multi-clip montage; maps to a per-clip duration via `PACE_TO_CLIP_SECONDS` ≈ 1s … 6.5s; ignored for single-clip edits, which use `speed`)
 - `speed` — `slow` (≈0.5x slow-mo) | `normal` | `fast` (applied to single-clip edits only)
 - `color_filter` — `none` | `vibrant` (Shotstack "boost") | `muted` | `bw` (greyscale) | `dramatic` (contrast)
 - `transition` — `cut` | `fade` | `zoom` (between clips; multi-clip only)
 - `text_overlays[]` — `{ text, position: top|center|bottom, color: hex/name (sanitized), uppercase }`
 
-The renderer (`src/templates/index.ts` → `buildEdit(plan, clips, outputSize, musicUrl)`) translates the plan to Shotstack JSON. `STYLE_PRESETS` holds per-style defaults (clip duration in a montage, overlay font scale, a fallback music query).
+The renderer (`src/templates/index.ts` → `buildEdit(plan, clips, outputSize, musicUrl)`) translates the plan to Shotstack JSON. `STYLE_PRESETS` holds per-style defaults (overlay font scale, a fallback `MusicSpec`); `PACE_TO_CLIP_SECONDS` maps `pace` → montage clip duration (with a 2s floor when there are only 2 clips). The matcher's big system prompt is cached (`cache_control: ephemeral`).
 
 ## State machine
 
@@ -98,7 +99,7 @@ Self-loop / throttled-poll state: `submitted` — re-claims each tick but only p
 
 Either way the result is a uniform video clip. The first clip's normalized dimensions size the render output, so output orientation always matches the (first) source — portrait→portrait, landscape→landscape, image or video.
 
-**Music (`src/services/music.ts`):** every render gets a soundtrack and the source clips are muted (unless `keep_original_audio`, then ducked to 0.3). The matcher returns a structured `MusicSpec` in the plan: `tags` (0-3 from `JAMENDO_TAGS` in schemas.ts — genre + mood + occasion), `freetext` (a backup query / a named public-domain piece like "jingle bells instrumental"), `tempo` (slow/medium/fast/any → Jamendo `speed`), `acoustic_or_electric`. `resolveMusicUrl(spec)` resolves it: (1) curated track ID for iconic themes (`CURATED_BY_TAG` / `CURATED_KEYWORDS` — e.g. christmas → the real "Jingle Bells" track 478677, halloween/summer/romantic also pinned); (2) Jamendo `tags=…&search=…&speed=…&acousticelectric=…` (the `tags` filter is far sharper than free-text search); (3) progressively looser fallbacks — drop speed/acoustic, then drop tags (search only), then `fuzzytags`. The chosen track is downloaded and re-hosted on R2 (`music/jamendo-<id>.mp3` — Jamendo audio URLs carry an expiring token) and cached. If nothing resolves, falls back to a hardcoded Shotstack-CDN track. If the plan's music is empty, the style preset's `fallbackMusic` spec is used. Jamendo's free tier is non-commercial — fine for the demo. NOTE: copyrighted/famous music (film scores, Top-40) isn't in any royalty-free library and never will be — the matcher names public-domain pieces (carols, classical) instead.
+**Music (`src/services/music.ts`):** every render gets a soundtrack and the source clips are muted (unless `keep_original_audio`, then ducked to 0.3). The matcher returns a structured `MusicSpec` in the plan: `tags` (0-3 from `JAMENDO_TAGS` in schemas.ts — genre + mood + occasion), `freetext` (a backup query / a named public-domain piece like "jingle bells instrumental"), `tempo` (slow/medium/fast/any → Jamendo `speed`), `acoustic_or_electric`. `resolveMusicUrl(spec)` resolves it: (1) curated track ID for iconic themes (`CURATED_BY_TAG` / `CURATED_KEYWORDS` — e.g. christmas → the real "Jingle Bells" track 478677, halloween/summer/romantic also pinned); (2) Jamendo `tags=…&search=…&speed=…&acousticelectric=…` (the `tags` filter is far sharper than free-text search) — each query pulls a pool of ~20 candidates and picks one at random for variety; (3) progressively looser fallbacks — drop speed/acoustic, then drop tags (search only), then `fuzzytags`. The chosen track is downloaded and re-hosted on R2 (`music/jamendo-<id>.mp3` — Jamendo audio URLs carry an expiring token). If nothing resolves, falls back to a hardcoded Shotstack-CDN track. If the plan's music is empty, the style preset's `fallbackMusic` spec is used. Jamendo's free tier is non-commercial — fine for the demo. NOTE: copyrighted/famous music (film scores, Top-40) isn't in any royalty-free library and never will be — the matcher names public-domain pieces (carols, classical) instead.
 
 `advance(job)` is in `src/state.ts`. Pure async: takes the job, runs the side effect for the current state, returns next state + a result patch (shallow-merged into `job.result`).
 
