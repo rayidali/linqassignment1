@@ -1,22 +1,42 @@
-import type { EditPlan, StyleId, TextOverlay } from "../schemas.js";
+import type { EditPlan, StyleId, TextOverlay, MusicSpec } from "../schemas.js";
 
 // "Style presets" provide the rendering scaffold for each base style: how long
-// each clip plays in a multi-clip montage, and the overlay font size relative
-// to the frame. The mastermind matcher picks a style and then layers the rest
-// of the plan (transition, color filter, speed, music, per-overlay styling) on
-// top — so two "hype" edits can look quite different.
+// each clip plays in a multi-clip montage, the overlay font size relative to
+// the frame, and a fallback music spec used if the plan's music is empty. The
+// mastermind matcher picks a style and then layers the rest of the plan
+// (transition, color filter, speed, music, per-overlay styling) on top.
 type StylePreset = {
   clipDurationS: number;
   fontScale: number; // × min(frameW, frameH)
-  fallbackMusicQuery: string; // used if the plan's music_query is empty
+  fallbackMusic: MusicSpec;
 };
 
 export const STYLE_PRESETS: Record<StyleId, StylePreset> = {
-  hype: { clipDurationS: 3, fontScale: 0.085, fallbackMusicQuery: "high energy hype electronic instrumental" },
-  sad: { clipDurationS: 5, fontScale: 0.05, fallbackMusicQuery: "sad emotional piano instrumental" },
-  chill: { clipDurationS: 4, fontScale: 0.045, fallbackMusicQuery: "mellow lofi chill beats instrumental" },
-  funny: { clipDurationS: 2.5, fontScale: 0.08, fallbackMusicQuery: "funny quirky upbeat instrumental" },
-  cinematic: { clipDurationS: 6, fontScale: 0.04, fallbackMusicQuery: "cinematic epic orchestral instrumental" },
+  hype: {
+    clipDurationS: 3,
+    fontScale: 0.085,
+    fallbackMusic: { tags: ["energetic", "electronic"], freetext: "high energy hype", tempo: "fast", acoustic_or_electric: "any" },
+  },
+  sad: {
+    clipDurationS: 5,
+    fontScale: 0.05,
+    fallbackMusic: { tags: ["sad", "classical"], freetext: "emotional piano", tempo: "slow", acoustic_or_electric: "acoustic" },
+  },
+  chill: {
+    clipDurationS: 4,
+    fontScale: 0.045,
+    fallbackMusic: { tags: ["chillout", "lounge"], freetext: "mellow lofi chill beats", tempo: "medium", acoustic_or_electric: "any" },
+  },
+  funny: {
+    clipDurationS: 2.5,
+    fontScale: 0.08,
+    fallbackMusic: { tags: ["funk", "happy"], freetext: "funny quirky upbeat", tempo: "medium", acoustic_or_electric: "any" },
+  },
+  cinematic: {
+    clipDurationS: 6,
+    fontScale: 0.04,
+    fallbackMusic: { tags: ["cinematic", "epic", "soundtrack"], freetext: "cinematic epic orchestral", tempo: "medium", acoustic_or_electric: "any" },
+  },
 };
 
 // Loose Shotstack edit type. See https://shotstack.io/docs/api/

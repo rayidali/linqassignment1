@@ -40,6 +40,30 @@ export type LinqWebhookPayload = z.infer<typeof LinqWebhookPayload>;
 export const STYLE_IDS = ["hype", "sad", "chill", "funny", "cinematic"] as const;
 export type StyleId = (typeof STYLE_IDS)[number];
 
+// Jamendo genre + mood/theme tags that we've verified return instrumental
+// results. The matcher picks up to 3; the resolver queries Jamendo's `tags`
+// filter with them (much sharper than free-text search).
+export const JAMENDO_TAGS = [
+  // genres
+  "pop", "rock", "electronic", "hiphop", "classical", "jazz", "lounge",
+  "soundtrack", "ambient", "chillout", "dance", "funk", "folk", "world", "metal",
+  // moods
+  "happy", "sad", "relaxing", "energetic", "dark", "nostalgic", "mysterious",
+  "dramatic", "uplifting", "cinematic", "epic", "motivational", "corporate",
+  "romantic", "love", "groovy", "calm", "aggressive",
+  // occasions / seasons
+  "christmas", "halloween", "summer", "party",
+] as const;
+export type JamendoTag = (typeof JAMENDO_TAGS)[number];
+
+export const MusicSpec = z.object({
+  tags: z.array(z.enum(JAMENDO_TAGS)).max(3), // 0-3 Jamendo tags
+  freetext: z.string(), // backup free-text query (can be ""), e.g. "jingle bells instrumental"
+  tempo: z.enum(["slow", "medium", "fast", "any"]),
+  acoustic_or_electric: z.enum(["acoustic", "electric", "any"]),
+});
+export type MusicSpec = z.infer<typeof MusicSpec>;
+
 export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
@@ -57,8 +81,7 @@ export const EditPlan = z.object({
   clarification_question: z.string(),
   // The edit (meaningful only when needs_clarification is false):
   style: z.enum(STYLE_IDS),
-  // Jamendo search query — always set (derived from the request, theme, or style).
-  music_query: z.string(),
+  music: MusicSpec,
   keep_original_audio: z.boolean(),
   speed: z.enum(["slow", "normal", "fast"]), // "slow" ≈ 0.5x; only applied to single-clip edits
   color_filter: z.enum(["none", "vibrant", "muted", "bw", "dramatic"]),

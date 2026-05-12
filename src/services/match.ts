@@ -6,7 +6,7 @@ import { z } from "zod/v4";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { scrubStyle } from "./chat.js";
-import { EditPlan as EditPlanSchema, STYLE_IDS } from "../schemas.js";
+import { EditPlan as EditPlanSchema, STYLE_IDS, JAMENDO_TAGS } from "../schemas.js";
 import type { EditPlan } from "../schemas.js";
 
 let _client: Anthropic | null = null;
@@ -25,7 +25,12 @@ const PlanSchema = z.object({
   needs_clarification: z.boolean(),
   clarification_question: z.string(),
   style: z.enum([...STYLE_IDS] as [string, ...string[]]),
-  music_query: z.string(),
+  music: z.object({
+    tags: z.array(z.enum([...JAMENDO_TAGS] as [string, ...string[]])).max(3),
+    freetext: z.string(),
+    tempo: z.enum(["slow", "medium", "fast", "any"]),
+    acoustic_or_electric: z.enum(["acoustic", "electric", "any"]),
+  }),
   keep_original_audio: z.boolean(),
   speed: z.enum(["slow", "normal", "fast"]),
   color_filter: z.enum(["none", "vibrant", "muted", "bw", "dramatic"]),
@@ -50,18 +55,18 @@ Output JSON with these fields:
 - needs_clarification: true ONLY if the request is genuinely too vague to make a reasonable edit (no caption at all, or just "edit this" with zero direction). Most requests are clear enough. DON'T over-ask. When in doubt, just make a good edit.
 - clarification_question: if needs_clarification, ONE short casual question (same gen-z style, no dashes/emoji). Else "". e.g. "what vibe u going for? hype, chill, sad, funny, or smth specific?"
 - style: "hype" (fast cuts, energetic, sports/gym/party/dance), "sad" (slow, emotional, melancholy, missing-someone), "chill" (aesthetic, dreamy, lifestyle, travel, sunsets, vibey), "funny" (snappy comedic, meme), or "cinematic" (slow, dramatic, epic, moody, film-like). Pick the closest. If the caption is empty, default to "chill".
-- music_query: ALWAYS set this — a short search query for a ROYALTY-FREE instrumental track. We do NOT have copyrighted/famous music (no John Williams film scores, no Top-40 hits), so:
-  * For a theme/occasion with iconic PUBLIC-DOMAIN music, name the actual song(s): "christmas edit" -> "jingle bells instrumental" or "we wish you a merry christmas instrumental" or "deck the halls instrumental"; "wedding" -> "canon in d wedding instrumental" or "wedding march instrumental"; "graduation" -> "pomp and circumstance instrumental".
-  * For a request that names a copyrighted song/artist, distill it to a genre/mood: "use Hot in Herre by Nelly" -> "upbeat 2000s hip hop instrumental".
-  * For a generic vibe, describe the genre/mood: "upbeat" -> "upbeat energetic instrumental"; "halloween" -> "spooky eerie halloween instrumental"; "workout" -> "high energy gym instrumental".
-  * Otherwise, something fitting the style. Always include "instrumental".
+- music: how to find a ROYALTY-FREE instrumental track. We do NOT have copyrighted/famous music (no John Williams film scores, no Top-40 hits) — never promise the user a specific famous song. The object:
+  * tags: pick 0-3 from this list (genre + mood + occasion), best-matching the request: ${[...JAMENDO_TAGS].join(", ")}. These are the strongest signal — choose carefully (e.g. "epic battle" -> ["epic","soundtrack","dramatic"]; "chill study vibes" -> ["chillout","lounge"]; "christmas" -> ["christmas"]; "halloween" -> ["halloween","dark"]; "gym workout" -> ["energetic","electronic"]; "sad breakup" -> ["sad","classical"]).
+  * freetext: a short backup query (used to refine within the tags, or alone if no tag fits). For an iconic PUBLIC-DOMAIN piece, name it here: "christmas" -> "jingle bells instrumental"; "wedding" -> "canon in d wedding"; "graduation" -> "pomp and circumstance". For a copyrighted-song request, distill to a vibe: "use Hot in Herre by Nelly" -> "upbeat 2000s hip hop". Otherwise a short genre/mood phrase. Can be "" if the tags say it all.
+  * tempo: "slow" (ballads, ambient, sad), "medium" (most), "fast" (hype, dance, workout), or "any" if unsure.
+  * acoustic_or_electric: "acoustic" (stripped-down, intimate, piano/guitar), "electric" (full produced band/synths), or "any" (default).
 - keep_original_audio: true ONLY if the user explicitly asks to keep the original sound ("keep the audio", "don't mute it", "i want them talking"). Otherwise false.
 - speed: "normal" by DEFAULT. Only "slow" if the user explicitly wants slow motion / slowed down, "fast" if explicitly sped up. Do not add slow-mo on your own.
 - color_filter: "none" by DEFAULT. Only set "bw" (if they say black & white / monochrome), "vibrant" (if they say vibrant/poppy/saturated), "muted" (if they say faded/washed out/vintage/aesthetic), or "dramatic" (if they say moody/dark/dramatic/high contrast). Do not add a filter on your own.
 - transition: "cut" by DEFAULT (clean hard cuts — looks best for most edits). Only "fade" if the user asks for smooth/flowy/crossfade transitions, or "zoom" if they ask for punchy/zoom cuts. Do not add fades on your own. (Only matters for multi-clip anyway.)
 - text_overlays: the on-screen text. If the user gives exact text ("put 'happy 25th sarah'"), use it verbatim. If a theme, infer it ("birthday edit" -> ["happy birthday"], "christmas" -> ["merry christmas"]). If they want text but didn't say what, write something short fitting the vibe (<= 6 words each). If they clearly don't want text, return []. Usually 1-2 overlays, don't overload. Each overlay: text; position ("top" for a title, "center" for emphasis, "bottom" for a caption); color (a hex like "#ffffff" or a CSS color name — white by default, but theme-fitting like gold "#ffd700" for birthday or red "#c0392b" for christmas, or what the user asks); uppercase (true for bold/hype/funny vibes, false for sad/chill/cinematic — unless the user says otherwise).
 
-Read the whole request. "christmas edit for my family" -> style "chill" or "cinematic", music_query "jingle bells instrumental", color_filter "none" (unless they asked), transition "cut" (unless they asked), text_overlays [{text:"merry christmas",position:"top",color:"#c0392b",uppercase:true}].`;
+Read the whole request. "christmas edit for my family" -> style "chill", music {tags:["christmas"],freetext:"jingle bells instrumental",tempo:"medium",acoustic_or_electric:"any"}, color_filter "none" (unless they asked), transition "cut" (unless they asked), text_overlays [{text:"merry christmas",position:"top",color:"#c0392b",uppercase:true}].`;
 
 export async function planEdit(
   jobId: string,
@@ -102,7 +107,7 @@ export async function planEdit(
     {
       needsClarification: plan.needs_clarification,
       style: plan.style,
-      musicQuery: plan.music_query,
+      music: plan.music,
       transition: plan.transition,
       colorFilter: plan.color_filter,
       speed: plan.speed,

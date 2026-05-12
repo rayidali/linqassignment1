@@ -169,9 +169,9 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       const outputSize =
         (result.outputSize as { width: number; height: number } | undefined) ?? undefined;
 
-      const musicQuery =
-        plan.music_query?.trim() || STYLE_PRESETS[plan.style].fallbackMusicQuery;
-      const resolvedMusic = await resolveMusicUrl(job.id, musicQuery);
+      const hasMusicSpec = plan.music.tags.length > 0 || plan.music.freetext.trim().length > 0;
+      const musicSpec = hasMusicSpec ? plan.music : STYLE_PRESETS[plan.style].fallbackMusic;
+      const resolvedMusic = await resolveMusicUrl(job.id, musicSpec);
       const musicUrl = resolvedMusic ?? FALLBACK_MUSIC_URL;
 
       log.info(
@@ -179,7 +179,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
           clipCount: clipUrls.length,
           style: plan.style,
           outputSize,
-          musicQuery,
+          musicSpec,
           musicResolved: Boolean(resolvedMusic),
           transition: plan.transition,
           colorFilter: plan.color_filter,
@@ -191,7 +191,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       const renderId = await submitRender(job.id, edit);
       return {
         nextState: "submitted",
-        resultPatch: { renderId, nextPollAt: 0, musicUrl, musicQuery },
+        resultPatch: { renderId, nextPollAt: 0, musicUrl, musicSpec },
       };
     }
 
