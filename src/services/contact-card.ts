@@ -50,8 +50,12 @@ export async function setupContactCard(): Promise<void> {
   }
   try {
     const imageUrl = await uploadLogo();
-    const cardFields: Record<string, string> = { first_name: CARD_FIRST_NAME };
-    if (CARD_LAST_NAME) cardFields.last_name = CARD_LAST_NAME;
+    // Always send last_name (even ""): the update endpoint keeps fields you
+    // omit, so without this an earlier card's stale last_name would stick.
+    const cardFields: Record<string, string> = {
+      first_name: CARD_FIRST_NAME,
+      last_name: CARD_LAST_NAME,
+    };
     if (imageUrl) cardFields.image_url = imageUrl;
     const headers = { "Content-Type": "application/json", Authorization: bearer() };
 
