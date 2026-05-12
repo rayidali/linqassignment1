@@ -1,5 +1,6 @@
 import { env } from "../env.js";
 import { logger } from "../logger.js";
+import { fetchWithTimeout, MEDIA_TIMEOUT_MS } from "../http.js";
 
 const LINQ_BASE = "https://api.linqapp.com/api/partner/v3";
 
@@ -27,7 +28,7 @@ export async function uploadAttachment(
   const log = logger.child({ jobId });
 
   log.info({ sourceUrl }, "fetching render output for re-upload");
-  const fetchRes = await fetch(sourceUrl);
+  const fetchRes = await fetchWithTimeout(sourceUrl, {}, MEDIA_TIMEOUT_MS);
   if (!fetchRes.ok || !fetchRes.body) {
     throw new Error(
       `fetch render output failed: ${fetchRes.status} ${fetchRes.statusText}`,
@@ -39,7 +40,7 @@ export async function uploadAttachment(
   log.info({ sizeBytes, contentType }, "render output downloaded into memory");
 
   // Step 1: POST /v3/attachments — request a presigned upload URL.
-  const createRes = await fetch(`${LINQ_BASE}/attachments`, {
+  const createRes = await fetchWithTimeout(`${LINQ_BASE}/attachments`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -64,11 +65,11 @@ export async function uploadAttachment(
     "Content-Type": contentType,
     ...(created.required_headers ?? {}),
   };
-  const uploadRes = await fetch(created.upload_url, {
+  const uploadRes = await fetchWithTimeout(created.upload_url, {
     method,
     headers,
     body: buffer,
-  });
+  }, MEDIA_TIMEOUT_MS);
   if (!uploadRes.ok) {
     const body = await uploadRes.text().catch(() => "");
     throw new Error(`Linq attachment upload failed: ${uploadRes.status} ${body}`);
@@ -90,7 +91,7 @@ export async function sendVideoReply(
   const parts: Array<Record<string, unknown>> = [];
   if (caption && caption.trim()) parts.push({ type: "text", value: caption.trim() });
   parts.push({ type: "media", attachment_id: attachmentId });
-  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/messages`, {
+  const res = await fetchWithTimeout(`${LINQ_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -116,7 +117,7 @@ export async function sendTextReply(
   text: string,
   idempotencyKey: string,
 ): Promise<void> {
-  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/messages`, {
+  const res = await fetchWithTimeout(`${LINQ_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -140,7 +141,7 @@ export async function sendTextReply(
 // into a chat — an Apple-native "Add to Contacts" card so the user can save us
 // with a name instead of a bare phone number.
 export async function shareContactCard(chatId: string): Promise<void> {
-  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/share_contact_card`, {
+  const res = await fetchWithTimeout(`${LINQ_BASE}/chats/${chatId}/share_contact_card`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

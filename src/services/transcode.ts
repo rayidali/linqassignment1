@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import ffmpegStatic from "ffmpeg-static";
 import sharp from "sharp";
 import { logger } from "../logger.js";
+import { fetchWithTimeout, MEDIA_TIMEOUT_MS } from "../http.js";
 
 // ffmpeg-static's CJS default export resolves to the binary path at runtime
 // under esModuleInterop; the .d.ts/CJS interop confuses tsc's type, so cast.
@@ -54,7 +55,7 @@ export async function fetchAndNormalize(
   const inPath = join(dir, "in");
   const outPath = join(dir, "out.mp4");
   try {
-    const res = await fetch(sourceUrl);
+    const res = await fetchWithTimeout(sourceUrl, {}, MEDIA_TIMEOUT_MS);
     if (!res.ok || !res.body) {
       throw new Error(`fetch source failed: ${res.status} ${res.statusText}`);
     }
@@ -113,7 +114,7 @@ export async function fetchAndNormalizeImage(
   const jpgPath = join(dir, "img.jpg");
   const outPath = join(dir, "out.mp4");
   try {
-    const res = await fetch(sourceUrl);
+    const res = await fetchWithTimeout(sourceUrl, {}, MEDIA_TIMEOUT_MS);
     if (!res.ok) {
       throw new Error(`fetch image failed: ${res.status} ${res.statusText}`);
     }

@@ -6,6 +6,12 @@ import { advance, type JobRow } from "./state.js";
 const WORKER_ID = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 const TICK_INTERVAL_MS = 1000;
 const CLAIM_TIMEOUT_MS = 60_000;
+// If a single tick is still running after this long, something is wedged
+// (a stuck native process, an unkillable promise) — exit so Render restarts
+// us cleanly rather than sitting frozen forever. Well above any legit tick
+// (a multi-clip `received` tick transcodes clips sequentially with their own
+// timeouts, ~13min worst case).
+const TICK_WATCHDOG_MS = 20 * 60_000;
 
 // States the worker won't claim: terminal (delivered/replied/failed) plus
 // awaiting_clarification (parked until the user replies). Kept in sync with
@@ -13,10 +19,13 @@ const CLAIM_TIMEOUT_MS = 60_000;
 
 let tickHandle: NodeJS.Timeout | null = null;
 let tickInFlight = false;
+let tickStartedAt = 0;
 let shuttingDown = false;
 
 async function claimOneJob(): Promise<JobRow | null> {
-  // Atomic claim in a single statement.
+  // Atomic claim in a single statement. Skips `submitted` jobs whose next
+  // poll isn't due yet — otherwise a render in progress (re-claimed every
+  // tick) would sit at the front of the createdAt queue and starve newer jobs.
   const rows = await prisma.$queryRaw<JobRow[]>`
     UPDATE "Job"
     SET "claimedAt" = NOW(), "claimedBy" = ${WORKER_ID}
@@ -24,11 +33,15 @@ async function claimOneJob(): Promise<JobRow | null> {
       SELECT id FROM "Job"
       WHERE state NOT IN ('delivered', 'replied', 'failed', 'awaiting_clarification')
         AND ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '60 seconds')
+        AND NOT (
+          state = 'submitted'
+          AND COALESCE((result->>'nextPollAt')::bigint, 0) > (EXTRACT(EPOCH FROM NOW()) * 1000)::bigint
+        )
       ORDER BY "createdAt" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id, type, "chatId", state, payload, result
+    RETURNING id, type, "chatId", state, payload, result, "createdAt"
   `;
   return rows[0] ?? null;
 }
@@ -47,8 +60,19 @@ async function notifyVideoFailure(job: JobRow, errorMsg: string): Promise<void> 
 }
 
 async function runTick(): Promise<void> {
-  if (tickInFlight || shuttingDown) return;
+  if (shuttingDown) return;
+  if (tickInFlight) {
+    if (tickStartedAt && Date.now() - tickStartedAt > TICK_WATCHDOG_MS) {
+      logger.fatal(
+        { stuckForMs: Date.now() - tickStartedAt },
+        "worker tick wedged past watchdog — exiting for a clean restart",
+      );
+      process.exit(1);
+    }
+    return;
+  }
   tickInFlight = true;
+  tickStartedAt = Date.now();
   try {
     const job = await claimOneJob();
     if (!job) return;

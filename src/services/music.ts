@@ -2,6 +2,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { getR2Client, getR2Bucket, r2PublicUrl } from "../r2.js";
+import { fetchWithTimeout, MEDIA_TIMEOUT_MS } from "../http.js";
 import type { MusicSpec } from "../schemas.js";
 
 const JAMENDO_API = "https://api.jamendo.com/v3.0";
@@ -52,7 +53,7 @@ function buildUrl(extra: Record<string, string>, limit = 1): string {
 }
 
 async function fetchTracks(u: string): Promise<JamendoTrack[]> {
-  const res = await fetch(u);
+  const res = await fetchWithTimeout(u);
   if (!res.ok) return [];
   const data = (await res.json().catch(() => null)) as { results?: JamendoTrack[] } | null;
   return (data?.results ?? []).filter((t): t is JamendoTrack => Boolean(t?.audio && t?.id));
@@ -128,7 +129,7 @@ export async function resolveMusicUrl(jobId: string, spec: MusicSpec): Promise<s
       { jobId, spec, trackId: track.id, name: track.name, artist: track.artist_name },
       "resolving music track from Jamendo",
     );
-    const audioRes = await fetch(track.audio);
+    const audioRes = await fetchWithTimeout(track.audio, {}, MEDIA_TIMEOUT_MS);
     if (!audioRes.ok || !audioRes.body) {
       logger.warn({ jobId, status: audioRes.status }, "failed to fetch Jamendo audio");
       return null;

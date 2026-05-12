@@ -1,5 +1,6 @@
 import { env } from "../env.js";
 import { logger } from "../logger.js";
+import { fetchWithTimeout } from "../http.js";
 
 // Sandbox env. Switch to "v1" for production.
 const SHOTSTACK_ENV = "stage";
@@ -22,7 +23,7 @@ export async function submitRender(jobId: string, edit: unknown): Promise<string
   const body = JSON.stringify(edit);
   logger.info({ jobId, editBytes: body.length }, "submitting render to Shotstack");
 
-  const res = await fetch(shotstackUrl("render"), {
+  const res = await fetchWithTimeout(shotstackUrl("render"), {
     method: "POST",
     headers: authHeaders(),
     body,
@@ -46,7 +47,7 @@ export type ShotstackStatus =
   | { status: "failed"; error: string };
 
 export async function pollRender(jobId: string, renderId: string): Promise<ShotstackStatus> {
-  const res = await fetch(shotstackUrl(`render/${renderId}`), {
+  const res = await fetchWithTimeout(shotstackUrl(`render/${renderId}`), {
     headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
   });
   const data = (await res.json().catch(() => null)) as

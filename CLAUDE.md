@@ -79,7 +79,7 @@ State names are **past-tense** — each describes what's been completed.
 | `downloaded` | else: send the confirmation + a rough time estimate | `matched` |
 | `awaiting_clarification` | (worker doesn't touch it — parked until the user's text reply, which the webhook routes back here as `result.clarificationAnswer` + state `downloaded`) | — |
 | `matched` | resolve the music query via Jamendo (`resolveMusicUrl`, fallback to a Shotstack-CDN track), `buildEdit(plan, …)`, submit render | `submitted` |
-| `submitted` | poll render status; self-loop (5s) until `done` | `rendered` |
+| `submitted` | poll render status; self-loop (5s) until `done`. If the render drags: text the user "still working on it" at ~4 min, silently resubmit a fresh render once at ~6 min, give up → `failed` at ~9 min (Shotstack's sandbox occasionally wedges a render forever) | `rendered` |
 | `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
 | `uploaded` | send video reply via Linq with a "here's ur {style} edit" caption | `delivered` |
 
@@ -91,7 +91,9 @@ State names are **past-tense** — each describes what's been completed.
 
 Terminal states: `delivered` (video success), `replied` (chat success), `failed` (error path). `awaiting_clarification` is parked, not terminal. The worker's claim SQL + recovery sweep skip all of `delivered`/`replied`/`failed`/`awaiting_clarification`.
 
-Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
+Self-loop / throttled-poll state: `submitted` — only polls Shotstack every 5s (gated by `result.nextPollAt`); the worker's claim SQL skips a `submitted` job whose next poll isn't due yet, so an in-progress render doesn't starve newer jobs.
+
+All outbound HTTP goes through `fetchWithTimeout` (`src/http.ts`) — Node's `fetch` has no default timeout, and a hung connection would otherwise freeze the worker via its single-tick-in-flight guard. There's also a watchdog: a tick still running after 20 min → `process.exit(1)` for a clean Render restart.
 
 **Media normalization (`src/services/transcode.ts`):** every uploaded media part is normalized to a clean H.264 MP4 clip *before* it touches Shotstack.
 - **Videos** → ffmpeg with `-autorotate` (default on) bakes rotation into the pixels (iPhone portrait videos store a landscape frame + a `rotate 90°` display matrix that Shotstack — neither Ingest nor render — applies), transcodes HEVC→H.264 (CRF 21), caps the long side at 1920px, faststart.

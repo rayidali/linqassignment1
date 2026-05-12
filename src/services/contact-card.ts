@@ -3,6 +3,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { getR2Client, getR2Bucket, r2PublicUrl } from "../r2.js";
+import { fetchWithTimeout } from "../http.js";
 
 const LINQ_BASE = "https://api.linqapp.com/api/partner/v3";
 const LOGO_R2_KEY = "assets/contact-card-logo.png";
@@ -57,7 +58,7 @@ export async function setupContactCard(): Promise<void> {
     const headers = { "Content-Type": "application/json", Authorization: bearer() };
 
     // Create: phone_number goes in the request body.
-    let res = await fetch(`${LINQ_BASE}/contact_card`, {
+    let res = await fetchWithTimeout(`${LINQ_BASE}/contact_card`, {
       method: "POST",
       headers,
       body: JSON.stringify({ phone_number: phoneNumber, ...cardFields }),
@@ -66,7 +67,7 @@ export async function setupContactCard(): Promise<void> {
       // A card already exists for this number — update it instead. NOTE: the
       // update endpoint takes phone_number as a QUERY param, not in the body.
       const updateUrl = `${LINQ_BASE}/contact_card?phone_number=${encodeURIComponent(phoneNumber)}`;
-      res = await fetch(updateUrl, { method: "PATCH", headers, body: JSON.stringify(cardFields) });
+      res = await fetchWithTimeout(updateUrl, { method: "PATCH", headers, body: JSON.stringify(cardFields) });
     }
     if (!res.ok) {
       const t = await res.text().catch(() => "");

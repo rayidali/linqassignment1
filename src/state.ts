@@ -41,6 +41,7 @@ export type JobRow = {
   state: string;
   payload: unknown;
   result: unknown;
+  createdAt: Date;
 };
 
 export type AdvanceResult = {
@@ -50,6 +51,11 @@ export type AdvanceResult = {
 };
 
 const POLL_INTERVAL_MS = 5000;
+// Shotstack's /stage sandbox occasionally wedges a render in "rendering"
+// forever. Measured from when we first submitted the render:
+const RENDER_SLOW_NOTICE_MS = 4 * 60_000; // text the user "still working on it"
+const RENDER_RESUBMIT_MS = 6 * 60_000; // silently resubmit a fresh render once
+const RENDER_GIVEUP_MS = 9 * 60_000; // give up, fail the job, tell the user it broke
 
 type ClipDownload = {
   r2Key: string;
@@ -195,7 +201,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       const renderId = await submitRender(job.id, edit);
       return {
         nextState: "submitted",
-        resultPatch: { renderId, nextPollAt: 0, musicUrl, musicSpec },
+        resultPatch: { renderId, renderSubmittedAt: Date.now(), nextPollAt: 0, musicUrl, musicSpec },
       };
     }
 
@@ -206,6 +212,48 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       if (now < nextPollAt) {
         return { nextState: "submitted" };
       }
+      // Age of this render. Fall back to job creation time for jobs that
+      // entered `submitted` before renderSubmittedAt was tracked.
+      const submittedAt = (result.renderSubmittedAt as number | undefined) ?? job.createdAt.getTime();
+      const ageMs = now - submittedAt;
+
+      // Give up on a wedged render so the user gets a definitive answer.
+      if (ageMs > RENDER_GIVEUP_MS) {
+        return { nextState: "failed", error: `render exceeded ${Math.round(RENDER_GIVEUP_MS / 60_000)}min, gave up` };
+      }
+
+      // One silent resubmit — the sandbox sometimes drops a render but a fresh
+      // submit goes straight through. Everything we need is still in `result`.
+      if (ageMs > RENDER_RESUBMIT_MS && !result.renderResubmitted) {
+        const plan = result.plan as EditPlan | undefined;
+        const clips = (result.clips as ClipDownload[] | undefined) ?? [];
+        const clipUrls = clips
+          .map((c) => c.r2PublicUrl)
+          .filter((u): u is string => typeof u === "string" && u.length > 0);
+        if (plan && clipUrls.length > 0) {
+          const outputSize = result.outputSize as { width: number; height: number } | undefined;
+          const musicUrl = (result.musicUrl as string | undefined) ?? FALLBACK_MUSIC_URL;
+          const edit = buildEdit(plan, clipUrls, outputSize, musicUrl);
+          const newRenderId = await submitRender(job.id, edit);
+          log.warn({ jobId: job.id, oldRenderId: renderId, newRenderId, ageMs }, "render slow, resubmitted a fresh one");
+          return {
+            nextState: "submitted",
+            resultPatch: { renderId: newRenderId, renderResubmitted: true, nextPollAt: now + POLL_INTERVAL_MS },
+          };
+        }
+        // Can't resubmit (missing data) — fall through and keep polling the original.
+      }
+
+      // Heads-up to the user once if it's dragging.
+      if (ageMs > RENDER_SLOW_NOTICE_MS && !result.slowNoticeSent) {
+        await sendTextReply(
+          chatId,
+          "shotstack's being a lil slow today, still working on ur edit, hang tight",
+          `${job.id}-slow`,
+        ).catch(() => {});
+        return { nextState: "submitted", resultPatch: { slowNoticeSent: true, nextPollAt: now + POLL_INTERVAL_MS } };
+      }
+
       const status = await pollRender(job.id, renderId);
       if (status.status === "done") {
         return { nextState: "rendered", resultPatch: { videoUrl: status.url } };
