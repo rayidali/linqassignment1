@@ -73,7 +73,7 @@ State names are **past-tense** — each describes what's been completed.
 
 | State | What advance() does | Next |
 |---|---|---|
-| `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each with ffmpeg (autorotate + H.264 + cap long side at 1920px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
+| `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each **sequentially** with ffmpeg (autorotate + H.264 + cap long side at 1920px) — parallel transcodes thrash the single CPU core and OOM — upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
 | `downloaded` | `planEdit`. If it needs clarification (and we haven't asked yet): send the question | `awaiting_clarification` |
 | `downloaded` | else: send the confirmation + a rough time estimate | `matched` |
 | `awaiting_clarification` | (worker doesn't touch it — parked until the user's text reply, which the webhook routes back here as `result.clarificationAnswer` + state `downloaded`) | — |

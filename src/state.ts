@@ -1,5 +1,5 @@
 import { logger } from "./logger.js";
-import { downloadMedia } from "./services/media.js";
+import { downloadMedia, type DownloadResult } from "./services/media.js";
 import { planEdit } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
@@ -109,9 +109,13 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         return { nextState: "failed", error: "no editable video or photo in the message" };
       }
       log.info({ clipCount: usable.length }, "downloading + normalizing all media parts");
-      const downloads = await Promise.all(
-        usable.map((p) => downloadMedia(job.id, p.url, p.filename, p.mime_type)),
-      );
+      // Sequentially, NOT in parallel: each ffmpeg transcode is CPU- and
+      // memory-heavy and the instance is a single core — running them
+      // concurrently just thrashes the CPU and risks an OOM kill.
+      const downloads: DownloadResult[] = [];
+      for (const p of usable) {
+        downloads.push(await downloadMedia(job.id, p.url, p.filename, p.mime_type));
+      }
       const clips: ClipDownload[] = downloads.map((d, i) => ({
         r2Key: d.key,
         r2PublicUrl: d.publicUrl,
