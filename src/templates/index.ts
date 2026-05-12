@@ -49,8 +49,8 @@ export type Template = {
   description: string;
   music_options: MusicOption[];
   text_slot_count: number;
-  // outputSize: if provided (probed from the first clip), the render matches
-  // the source video's orientation. If absent, defaults to 9:16 portrait.
+  // outputSize: if provided (the first clip's normalized dims), the render
+  // matches the source video's orientation. If absent, defaults to 9:16.
   buildEdit: (clips: string[], choice: TemplateChoice, outputSize?: OutputSize) => ShotstackEdit;
 };
 
@@ -62,7 +62,11 @@ const SAD_CLIP_S = 5;
 const CHILL_CLIP_S = 4;
 const FUNNY_CLIP_S = 2.5;
 
-function videoTrack(clips: string[], perClipS: number): ShotstackEdit["timeline"]["tracks"][number] {
+function videoTrack(
+  clips: string[],
+  perClipS: number,
+  transition?: { in?: string; out?: string },
+): ShotstackEdit["timeline"]["tracks"][number] {
   const single = clips.length === 1;
   return {
     clips: clips.map((url, i) => ({
@@ -75,7 +79,9 @@ function videoTrack(clips: string[], perClipS: number): ShotstackEdit["timeline"
       // "crop" = scale to fill the frame, preserving aspect ratio, cropping
       // overflow. (NOT "cover" — that one stretches/distorts to fit.)
       fit: "crop",
-      ...(single ? {} : { transition: { in: "fade", out: "fade" } }),
+      // No transition by default = hard cut between clips. A template can
+      // opt into fades/zooms via its `transition` field.
+      ...(single || !transition ? {} : { transition }),
     })),
   };
 }
@@ -118,12 +124,15 @@ function commonBuildEdit(
   titleStyle: string,
   titleSize: string,
   outputSize?: OutputSize,
+  // Omit for a hard cut between clips (the default). Pass e.g.
+  // { in: "fade", out: "fade" } to opt this template into transitions.
+  transition?: { in?: string; out?: string },
 ): ShotstackEdit {
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (choice.text_overlays.length > 0) {
     tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize));
   }
-  tracks.push(videoTrack(clips, perClipS));
+  tracks.push(videoTrack(clips, perClipS, transition));
   return {
     timeline: {
       background: "#000000",
