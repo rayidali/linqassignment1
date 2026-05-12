@@ -13,7 +13,13 @@ import { logger } from "../logger.js";
 // under esModuleInterop; the .d.ts/CJS interop confuses tsc's type, so cast.
 const FFMPEG_PATH = ffmpegStatic as unknown as string | null;
 const TRANSCODE_TIMEOUT_MS = 180_000;
-const MAX_INPUT_BYTES = 80 * 1024 * 1024;
+const MAX_INPUT_BYTES = 150 * 1024 * 1024;
+// Long-side cap for normalized media — 1080p output. (Was 1280 on the 512MB
+// free tier; the Standard instance has the RAM/CPU headroom for 1920.)
+const MAX_DIMENSION = 1920;
+// libx264 quality: lower = better. ~21 is visually clean; 25 was the
+// free-tier "small + fast" compromise.
+const X264_CRF = "21";
 // How long a still image plays as a clip. Multi-clip montages trim each clip
 // to the template's per-clip duration anyway; a single image plays the full
 // duration. 6s comfortably exceeds our longest template clip (5s).
@@ -34,7 +40,7 @@ function makeEven(n: number): number {
 //    portrait videos that store a landscape frame + a "rotate 90°" matrix
 //    that Shotstack does NOT apply)
 //  - transcode to H.264 / yuv420p (universal compatibility, drops HEVC)
-//  - cap the long side at 1280px (keeps render fast and files small)
+//  - cap the long side at MAX_DIMENSION (1080p)
 //  - faststart (moov atom at the front, for streaming playback)
 // Returns the normalized MP4 bytes plus its true display dimensions.
 export async function fetchAndNormalize(
@@ -65,10 +71,10 @@ export async function fetchAndNormalize(
     const args = [
       "-y",
       "-i", inPath,
-      // First scale: fit within a 1280x1280 box, preserving aspect, only
+      // First scale: fit within a MAX_DIMENSION box, preserving aspect, only
       // shrinking (decrease). Second: round to even dims (H.264 requires it).
-      "-vf", "scale=1280:1280:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-pix_fmt", "yuv420p",
+      "-vf", `scale=${MAX_DIMENSION}:${MAX_DIMENSION}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", X264_CRF, "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart",
       outPath,
@@ -92,7 +98,7 @@ export async function fetchAndNormalize(
 
 // Turns a still image (JPEG/PNG/HEIC/etc.) into a clean MP4 clip:
 //  - sharp decodes (including HEIC, which ffmpeg-static can't), auto-rotates
-//    from EXIF orientation, resizes to fit within 1280x1280 (no enlarging),
+//    from EXIF orientation, resizes to fit within MAX_DIMENSION (no enlarging),
 //    re-encodes as JPEG
 //  - ffmpeg loops that JPEG into an IMAGE_CLIP_DURATION_S-second H.264 video
 // Returns the MP4 bytes + dims (matching the resized image's orientation).
@@ -117,8 +123,8 @@ export async function fetchAndNormalizeImage(
     }
     const { data, info } = await sharp(inputBuf)
       .rotate() // auto-rotate from EXIF orientation tag
-      .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 85 })
+      .resize(MAX_DIMENSION, MAX_DIMENSION, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 90 })
       .toBuffer({ resolveWithObject: true });
     await writeFile(jpgPath, data);
     const width = makeEven(info.width);
@@ -132,7 +138,7 @@ export async function fetchAndNormalizeImage(
       "-t", String(IMAGE_CLIP_DURATION_S),
       "-r", "30",
       "-vf", `scale=${width}:${height},format=yuv420p`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", X264_CRF,
       "-movflags", "+faststart",
       outPath,
     ];

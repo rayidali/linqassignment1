@@ -73,7 +73,7 @@ State names are **past-tense** — each describes what's been completed.
 
 | State | What advance() does | Next |
 |---|---|---|
-| `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each with ffmpeg (autorotate + H.264 + cap 1280px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
+| `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each with ffmpeg (autorotate + H.264 + cap long side at 1920px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
 | `downloaded` | `planEdit`. If it needs clarification (and we haven't asked yet): send the question | `awaiting_clarification` |
 | `downloaded` | else: send the confirmation + a rough time estimate | `matched` |
 | `awaiting_clarification` | (worker doesn't touch it — parked until the user's text reply, which the webhook routes back here as `result.clarificationAnswer` + state `downloaded`) | — |
@@ -93,8 +93,8 @@ Terminal states: `delivered` (video success), `replied` (chat success), `failed`
 Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
 
 **Media normalization (`src/services/transcode.ts`):** every uploaded media part is normalized to a clean H.264 MP4 clip *before* it touches Shotstack.
-- **Videos** → ffmpeg with `-autorotate` (default on) bakes rotation into the pixels (iPhone portrait videos store a landscape frame + a `rotate 90°` display matrix that Shotstack — neither Ingest nor render — applies), transcodes HEVC→H.264, caps the long side at 1280px, faststart.
-- **Images** (`image/*`) → `sharp` decodes (including HEIC, which ffmpeg-static can't), auto-rotates from EXIF orientation, resizes to fit within 1280×1280; ffmpeg then loops it into a 6-second clip.
+- **Videos** → ffmpeg with `-autorotate` (default on) bakes rotation into the pixels (iPhone portrait videos store a landscape frame + a `rotate 90°` display matrix that Shotstack — neither Ingest nor render — applies), transcodes HEVC→H.264 (CRF 21), caps the long side at 1920px, faststart.
+- **Images** (`image/*`) → `sharp` decodes (including HEIC, which ffmpeg-static can't), auto-rotates from EXIF orientation, resizes to fit within 1920×1920; ffmpeg then loops it into a 6-second clip.
 
 Either way the result is a uniform video clip. The first clip's normalized dimensions size the render output, so output orientation always matches the (first) source — portrait→portrait, landscape→landscape, image or video.
 

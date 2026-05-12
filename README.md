@@ -6,7 +6,7 @@ Text a few clips and a caption to a phone number; get back a TikTok-style edited
 > "slow-mo cinematic black and white" → 0.5× speed, dramatic grade, greyscale, moody music.
 > *(a video with no caption)* → "what's the vibe? hype, chill, sad…?" — then it makes the edit from your answer.
 
-Built as a take-home project. It runs end to end on a free-tier deploy.
+Built as a take-home project. It's deployed and runs end to end.
 
 ---
 
@@ -18,7 +18,7 @@ Built as a take-home project. It runs end to end on a free-tier deploy.
 4. You get an instant `got it, lemme look at this`, then a confirmation of what it's making + a rough time estimate, then the finished video a bit later.
 5. Text it questions any time ("how's my video coming?", "what styles can you do?") — it's a chatbot too.
 
-**Demo limits** (it's a demo, on free infra): 50 video edits per person per day, ≥60s between videos, ~200 video edits per day across everyone. Cold starts take ~60s (free tier sleeps when idle — your message still goes through, the bot just wakes up first). Music comes from a royalty-free library (Jamendo), so famous/copyrighted tracks aren't available — for themes like Christmas it uses public-domain equivalents (carols, classical).
+**Demo limits:** 50 video edits per person per day, ≥60s between videos, ~200 video edits per day across everyone. Music comes from a royalty-free library (Jamendo), so famous/copyrighted tracks aren't available — for themes like Christmas it uses public-domain equivalents (carols, classical).
 
 ---
 
@@ -52,7 +52,7 @@ The prompt makes Claude **conservative on stylistic choices** (don't add a fade 
 
 **Rendering (`src/templates/index.ts` → `buildEdit`):** translates the `EditPlan` into a [Shotstack](https://shotstack.io) edit (timeline JSON) — montage timing per style, the music track, muted/ducked source audio, text overlays as wrapping HTML assets, the color filter, the transition. The render is polled until done, the output is pre-uploaded to Linq as an attachment, and the video is texted back with a `here's ur {style} edit` caption.
 
-**Media normalization (`src/services/transcode.ts`):** every uploaded clip is normalized *before* it touches Shotstack — ffmpeg bakes iPhone rotation into the pixels, transcodes HEVC→H.264, caps the long side at 1280px; images (incl. HEIC, via `sharp`) are auto-rotated from EXIF and looped into a short clip. The first clip's dimensions size the output, so a portrait source gives a portrait video.
+**Media normalization (`src/services/transcode.ts`):** every uploaded clip is normalized *before* it touches Shotstack — ffmpeg bakes iPhone rotation into the pixels, transcodes HEVC→H.264 (CRF 21), caps the long side at 1920px (1080p output); images (incl. HEIC, via `sharp`) are auto-rotated from EXIF and looped into a short clip. The first clip's dimensions size the output, so a portrait source gives a portrait video.
 
 **Access control (`src/services/access.ts`):** first-use opt-in (reply `OK`), per-sender video limits, a system-wide daily budget, and an allowlist (the dev's test phone) that skips the per-minute limit. Tracked in a `Sender` table; the webhook dedups on the Linq event id so retries don't double-count.
 
@@ -138,4 +138,4 @@ ESM/NodeNext rule: relative imports end in `.js` even though the source is `.ts`
 - `speed` (slow-mo) applies to single-clip edits only (multi-clip trim math gets fiddly).
 - Source audio is all-or-nothing (muted, or kept and ducked to 0.3) — no per-clip audio control.
 - Overlay font is Helvetica Bold only (custom display fonts need a hosted `.ttf`).
-- Free-tier infra: ~60s cold start; large files strain 512MB RAM during transcoding (there's an ~80MB input cap as a guard).
+- Heavy transcoding (e.g. 4K → 1080p) is CPU-bound on a single core, so very long source clips add latency; there's a 150MB input-size cap as a guard.

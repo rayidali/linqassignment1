@@ -182,7 +182,7 @@ export function buildEdit(
   musicUrl: string,
 ): ShotstackEdit {
   const preset = STYLE_PRESETS[plan.style];
-  const size = outputSize ?? { width: 720, height: 1280 };
+  const size = outputSize ?? { width: 1080, height: 1920 };
 
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (plan.text_overlays.length > 0) {

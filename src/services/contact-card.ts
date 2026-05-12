@@ -42,23 +42,31 @@ async function uploadLogo(): Promise<string | null> {
 // Idempotent: POSTs to create, falls back to PATCH if a card already exists.
 // Failures are logged, not thrown — the contact card is a nice-to-have.
 export async function setupContactCard(): Promise<void> {
-  if (!env.LINQ_NUMBER || !env.LINQ_API_KEY) {
+  const phoneNumber = env.LINQ_NUMBER;
+  if (!phoneNumber || !env.LINQ_API_KEY) {
     logger.info("contact card: LINQ_NUMBER or LINQ_API_KEY not set, skipping setup");
     return;
   }
   try {
     const imageUrl = await uploadLogo();
-    const body = JSON.stringify({
-      phone_number: env.LINQ_NUMBER,
+    const cardFields: Record<string, string> = {
       first_name: CARD_FIRST_NAME,
       last_name: CARD_LAST_NAME,
-      ...(imageUrl ? { image_url: imageUrl } : {}),
-    });
+    };
+    if (imageUrl) cardFields.image_url = imageUrl;
     const headers = { "Content-Type": "application/json", Authorization: bearer() };
-    let res = await fetch(`${LINQ_BASE}/contact_card`, { method: "POST", headers, body });
+
+    // Create: phone_number goes in the request body.
+    let res = await fetch(`${LINQ_BASE}/contact_card`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ phone_number: phoneNumber, ...cardFields }),
+    });
     if (!res.ok) {
-      // Most likely a card already exists for this number — update it instead.
-      res = await fetch(`${LINQ_BASE}/contact_card`, { method: "PATCH", headers, body });
+      // A card already exists for this number — update it instead. NOTE: the
+      // update endpoint takes phone_number as a QUERY param, not in the body.
+      const updateUrl = `${LINQ_BASE}/contact_card?phone_number=${encodeURIComponent(phoneNumber)}`;
+      res = await fetch(updateUrl, { method: "PATCH", headers, body: JSON.stringify(cardFields) });
     }
     if (!res.ok) {
       const t = await res.text().catch(() => "");
