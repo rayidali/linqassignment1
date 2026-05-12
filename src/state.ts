@@ -1,10 +1,11 @@
+import { prisma } from "./db.js";
 import { logger } from "./logger.js";
 import { downloadMedia, type DownloadResult } from "./services/media.js";
 import { planEdit } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
 import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
-import { generateReply } from "./services/chat.js";
+import { generateReply, classifyTweakRequest } from "./services/chat.js";
 import { buildEdit, STYLE_PRESETS, PACE_TO_CLIP_SECONDS } from "./templates/index.js";
 import type { LinqWebhookPayload, EditPlan } from "./schemas.js";
 
@@ -117,6 +118,52 @@ async function advanceChatJob(job: JobRow): Promise<AdvanceResult> {
   const chatId = job.chatId ?? payload.data.chat.id;
   const userText = captionOf(payload).trim() || "(empty message)";
 
+  // Is this a tweak of their most recent delivered edit? If so, spin off a
+  // refinement video job — it re-renders from the already-normalized clips on
+  // R2 (no resend, no re-transcode), with the matcher applying just the change.
+  const lastDelivered = await prisma.job.findFirst({
+    where: { chatId, type: "video", state: "delivered" },
+    orderBy: { createdAt: "desc" },
+  });
+  if (lastDelivered && (await classifyTweakRequest(userText))) {
+    const prev = (lastDelivered.result ?? {}) as Record<string, unknown>;
+    const priorPlan = prev.plan as EditPlan | undefined;
+    const clips = (prev.clips as ClipDownload[] | undefined) ?? [];
+    const usableClips = clips.filter(
+      (c) => typeof c.r2PublicUrl === "string" && c.r2PublicUrl.length > 0,
+    );
+    if (priorPlan && usableClips.length > 0) {
+      const ack = "k on it, redoing that for u";
+      const refined = await prisma.job.upsert({
+        where: { externalId: `${job.id}-refine` },
+        create: {
+          externalId: `${job.id}-refine`,
+          type: "video",
+          chatId,
+          state: "downloaded",
+          payload: payload as object,
+          result: {
+            clips: usableClips,
+            outputSize: prev.outputSize ?? null,
+            refinementOf: lastDelivered.id,
+            refinementRequest: userText,
+            priorCaption: captionOf(lastDelivered.payload as LinqWebhookPayload),
+            priorPlan,
+            priorMusicSpec: prev.musicSpec ?? null,
+            priorMusicUrl: prev.musicUrl ?? null,
+          } as object,
+        },
+        update: {},
+      });
+      await sendTextReply(chatId, ack, `${job.id}-refine-ack`).catch((e) =>
+        log.warn({ err: e instanceof Error ? e.message : String(e) }, "refine ack send failed"),
+      );
+      log.info({ refinedJobId: refined.id, refinementOf: lastDelivered.id }, "spawned refinement job");
+      return { nextState: "replied", resultPatch: { userText, reply: ack, refinedJobId: refined.id } };
+    }
+    log.info("classified as tweak but no usable prior edit, falling back to chat");
+  }
+
   const reply = await generateReply(job.id, chatId, userText);
   await sendTextReply(chatId, reply, job.id);
   log.info("chat reply sent");
@@ -168,16 +215,26 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
 
     case "downloaded": {
       const clipCount = (result.clips as ClipDownload[] | undefined)?.length ?? 1;
+      const refinementOf = result.refinementOf as string | undefined;
+      const isRefinement = Boolean(refinementOf);
       const clarificationAnswer = result.clarificationAnswer as string | undefined;
       const clarificationCount = (result.clarificationCount as number | undefined) ?? 0;
+      const priorPlan = result.priorPlan as EditPlan | undefined;
+
       const plan = await planEdit(job.id, {
-        caption: captionOf(payload),
-        clarificationAnswer,
+        caption: isRefinement
+          ? (result.priorCaption as string | undefined) ?? ""
+          : captionOf(payload),
+        clarificationAnswer: isRefinement ? undefined : clarificationAnswer,
         clipCount,
+        refinement:
+          isRefinement && priorPlan
+            ? { priorPlan, request: (result.refinementRequest as string | undefined) ?? "" }
+            : undefined,
       });
 
       const shouldAskClarification =
-        plan.needs_clarification && Boolean(plan.clarification_question) && clarificationCount < 1;
+        !isRefinement && plan.needs_clarification && Boolean(plan.clarification_question) && clarificationCount < 1;
       if (shouldAskClarification) {
         await sendTextReply(chatId, plan.clarification_question, `${job.id}-clarify-${clarificationCount}`);
         return {
@@ -208,7 +265,15 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
 
       const hasMusicSpec = plan.music.tags.length > 0 || plan.music.freetext.trim().length > 0;
       const musicSpec = hasMusicSpec ? plan.music : STYLE_PRESETS[plan.style].fallbackMusic;
-      const resolvedMusic = await resolveMusicUrl(job.id, musicSpec);
+      // Refinement that didn't touch the music → reuse the exact same track
+      // (so "make the text yellow" doesn't also swap the song).
+      const priorPlan = result.priorPlan as EditPlan | undefined;
+      const priorMusicUrl = result.priorMusicUrl as string | undefined;
+      const musicUnchanged = priorPlan
+        ? JSON.stringify(plan.music) === JSON.stringify(priorPlan.music)
+        : false;
+      const resolvedMusic =
+        musicUnchanged && priorMusicUrl ? priorMusicUrl : await resolveMusicUrl(job.id, musicSpec);
       const musicUrl = resolvedMusic ?? FALLBACK_MUSIC_URL;
 
       log.info(
@@ -308,7 +373,14 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
     case "uploaded": {
       const attachmentId = result.attachmentId as string;
       const style = (result.plan as EditPlan | undefined)?.style;
-      const caption = style ? `here's ur ${style} edit` : "here u go";
+      const isRefinement = Boolean(result.refinementOf);
+      const caption = isRefinement
+        ? style
+          ? `here's the updated ${style} edit`
+          : "here's the updated one"
+        : style
+          ? `here's ur ${style} edit`
+          : "here u go";
       await sendVideoReply(job.id, chatId, attachmentId, caption);
       return { nextState: "delivered" };
     }

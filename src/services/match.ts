@@ -135,25 +135,42 @@ WORKED EXAMPLES (the reasoning, not just the output):
 
 "just make something cool with these" (3 clips, nothing else) — has clips but no vibe at all. needs_clarification true; clarification_question "what vibe u want? hype, chill, sad, funny, cinematic, or smth specific?". (Fill the rest with reasonable neutral values: style "chill", pace "medium", etc.)
 
-Read the WHOLE request, infer everything it implies, keep every field coherent, and don't ask if you can reasonably guess.`;
+Read the WHOLE request, infer everything it implies, keep every field coherent, and don't ask if you can reasonably guess.
+
+TWEAK MODE: if the user message includes a PRIOR EDIT PLAN plus a "they now want this changed:" note, return that exact plan with ONLY the requested change applied — keep every other field byte-for-byte identical. needs_clarification must be false. The confirmation should say what you changed (e.g. "k made the text yellow" / "k sped it up" / "k swapped the music to something chiller").`;
 
 export async function planEdit(
   jobId: string,
-  input: { caption: string; clarificationAnswer?: string; clipCount: number },
+  input: {
+    caption: string;
+    clarificationAnswer?: string;
+    clipCount: number;
+    refinement?: { priorPlan: EditPlan; request: string };
+  },
 ): Promise<EditPlan> {
   const log = logger.child({ jobId });
-  const { caption, clarificationAnswer, clipCount } = input;
+  const { caption, clarificationAnswer, clipCount, refinement } = input;
   log.info(
-    { captionLen: caption.length, hasClarification: Boolean(clarificationAnswer), clipCount },
+    {
+      captionLen: caption.length,
+      hasClarification: Boolean(clarificationAnswer),
+      isRefinement: Boolean(refinement),
+      clipCount,
+    },
     "planning edit via Anthropic",
   );
 
-  const userMessage =
-    `The user sent ${clipCount} ${clipCount === 1 ? "clip or photo" : "clips/photos"}.\n` +
-    `Caption: ${caption.trim() || "(none)"}` +
-    (clarificationAnswer
-      ? `\nThe user clarified: ${clarificationAnswer.trim()}\n(You already asked one clarifying question — do NOT ask again, just make your best edit.)`
-      : "");
+  const userMessage = refinement
+    ? `The user already got an edited video from these ${clipCount} ${clipCount === 1 ? "clip/photo" : "clips/photos"}.\n` +
+      `Original caption: ${caption.trim() || "(none)"}\n` +
+      `PRIOR EDIT PLAN:\n${JSON.stringify(refinement.priorPlan)}\n` +
+      `They now want this changed: ${refinement.request.trim()}\n` +
+      `(TWEAK MODE — return the prior plan with only that change applied. Do NOT ask for clarification.)`
+    : `The user sent ${clipCount} ${clipCount === 1 ? "clip or photo" : "clips/photos"}.\n` +
+      `Caption: ${caption.trim() || "(none)"}` +
+      (clarificationAnswer
+        ? `\nThe user clarified: ${clarificationAnswer.trim()}\n(You already asked one clarifying question — do NOT ask again, just make your best edit.)`
+        : "");
 
   const response = await getClient().messages.parse({
     model: "claude-opus-4-7",

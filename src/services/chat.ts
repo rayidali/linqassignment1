@@ -97,6 +97,36 @@ async function loadContext(jobId: string, chatId: string): Promise<{
   return { history, renderNote };
 }
 
+// Quick, cheap (Haiku) classifier: is this text-only message the user asking
+// to TWEAK / redo their last delivered edit (change the text, music, speed,
+// color, add/remove something), vs. a normal chat message? Only called when
+// the user actually has a recent delivered edit to refine. Fails closed
+// (returns false) so a hiccup just means they get a normal chat reply.
+export async function classifyTweakRequest(text: string): Promise<boolean> {
+  if (!text.trim()) return false;
+  try {
+    const response = await getClient().messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 8,
+      system:
+        "The user previously got an edited video from an AI video editor and just sent this text-only message. " +
+        "Is it a request to TWEAK or redo that last edit (change the text / music / speed / color, add or remove " +
+        'something, "make it like the last one but ___", "actually change ___", "do it again but faster")? ' +
+        "Answer with exactly one word: TWEAK if yes, CHAT if it's a question, small talk, thanks, or a brand-new request.",
+      messages: [{ role: "user", content: text }],
+    });
+    const block = response.content.find((b) => b.type === "text");
+    const word = block && block.type === "text" ? block.text.trim().toUpperCase() : "";
+    return word.startsWith("TWEAK");
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "tweak classifier failed, treating as not-a-tweak",
+    );
+    return false;
+  }
+}
+
 // Generates the chatbot's reply to a text-only message. Does NOT send it —
 // the caller (state machine) sends via sendTextReply and persists.
 export async function generateReply(
