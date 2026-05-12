@@ -1,24 +1,28 @@
 import { prisma } from "./db.js";
 import { logger } from "./logger.js";
-import { advance, TERMINAL_STATES, type JobRow, type State } from "./state.js";
+import { sendTextReply } from "./services/linq.js";
+import { advance, type JobRow } from "./state.js";
 
 const WORKER_ID = `worker-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 const TICK_INTERVAL_MS = 1000;
 const CLAIM_TIMEOUT_MS = 60_000;
+
+// States the worker won't claim: terminal (delivered/replied/failed) plus
+// awaiting_clarification (parked until the user replies). Kept in sync with
+// state.ts WORKER_SKIP_STATES — small and stable, so inlined in SQL below.
 
 let tickHandle: NodeJS.Timeout | null = null;
 let tickInFlight = false;
 let shuttingDown = false;
 
 async function claimOneJob(): Promise<JobRow | null> {
-  // Atomic claim in a single statement — avoids the cost (and the transaction
-  // timeout we hit with $transaction) of wrapping SELECT + UPDATE.
+  // Atomic claim in a single statement.
   const rows = await prisma.$queryRaw<JobRow[]>`
     UPDATE "Job"
     SET "claimedAt" = NOW(), "claimedBy" = ${WORKER_ID}
     WHERE id = (
       SELECT id FROM "Job"
-      WHERE state NOT IN ('delivered', 'replied', 'failed')
+      WHERE state NOT IN ('delivered', 'replied', 'failed', 'awaiting_clarification')
         AND ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '60 seconds')
       ORDER BY "createdAt" ASC
       LIMIT 1
@@ -27,6 +31,19 @@ async function claimOneJob(): Promise<JobRow | null> {
     RETURNING id, type, "chatId", state, payload, result
   `;
   return rows[0] ?? null;
+}
+
+async function notifyVideoFailure(job: JobRow, errorMsg: string): Promise<void> {
+  if (job.type !== "video" || !job.chatId) return;
+  const friendly = /no editable|no media/i.test(errorMsg)
+    ? "i can only edit videos and photos rn, send me one of those"
+    : "ah that one broke on me, mind trying again? lmk if it keeps happening";
+  await sendTextReply(job.chatId, friendly, `${job.id}-fail`).catch((e) => {
+    logger.warn(
+      { jobId: job.id, err: e instanceof Error ? e.message : String(e) },
+      "failed to send failure notice to user",
+    );
+  });
 }
 
 async function runTick(): Promise<void> {
@@ -58,6 +75,9 @@ async function runTick(): Promise<void> {
           "state transition",
         );
       }
+      if (advanceResult.nextState === "failed") {
+        await notifyVideoFailure(job, advanceResult.error ?? "unknown");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ jobId: job.id, state: job.state, err: message }, "advance threw");
@@ -70,6 +90,7 @@ async function runTick(): Promise<void> {
           claimedBy: null,
         },
       });
+      await notifyVideoFailure(job, message);
     }
   } catch (err) {
     logger.error({ err }, "tick failed before claim");
@@ -105,7 +126,7 @@ export async function recoverStaleClaims(): Promise<number> {
   const result = await prisma.job.updateMany({
     where: {
       claimedAt: { lt: cutoff },
-      state: { notIn: ["delivered", "replied", "failed"] },
+      state: { notIn: ["delivered", "replied", "failed", "awaiting_clarification"] },
     },
     data: { claimedAt: null, claimedBy: null },
   });

@@ -37,7 +37,9 @@ what to actually say:
 - if they ask u to change an edit thats already rendering: tell them u cant change that one now but they can resend with new instructions once its done`;
 
 // Belt-and-suspenders: strip em/en dashes and emoji even if the model slips.
-function scrubStyle(text: string): string {
+// Exported so the matcher's user-facing strings (confirmations, clarifying
+// questions) get the same treatment.
+export function scrubStyle(text: string): string {
   return text
     .replace(/[—–]/g, ", ")
     .replace(/\p{Extended_Pictographic}/gu, "")

@@ -78,13 +78,18 @@ export async function uploadAttachment(
   return created.attachment_id;
 }
 
-// Send a media-only reply (the rendered video) to a chat.
+// Send the rendered video back to a chat, optionally with a short text caption
+// in the same message.
 export async function sendVideoReply(
   jobId: string,
   chatId: string,
   attachmentId: string,
+  caption?: string,
 ): Promise<void> {
   const log = logger.child({ jobId, chatId });
+  const parts: Array<Record<string, unknown>> = [];
+  if (caption && caption.trim()) parts.push({ type: "text", value: caption.trim() });
+  parts.push({ type: "media", attachment_id: attachmentId });
   const res = await fetch(`${LINQ_BASE}/chats/${chatId}/messages`, {
     method: "POST",
     headers: {
@@ -93,7 +98,7 @@ export async function sendVideoReply(
     },
     body: JSON.stringify({
       message: {
-        parts: [{ type: "media", attachment_id: attachmentId }],
+        parts,
         idempotency_key: jobId,
       },
     }),

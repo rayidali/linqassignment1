@@ -50,24 +50,45 @@ The webhook runs `checkAccess()` before creating a Job. It tracks senders in the
 
 The webhook also dedups on `Job.externalId` (a `findUnique` before `checkAccess`) so Linq's webhook retries don't re-run access checks or double-bump counters.
 
+## The "mastermind" matcher (`src/services/match.ts` → `planEdit`)
+
+`planEdit` is the brain. Given the user's caption + clip count (+ a clarification answer on a re-run), Claude Opus 4.7 returns an `EditPlan` (see `schemas.ts`):
+- `confirmation` — short casual line texted to the user ("doing a hype gym edit w bold text"), gen-z styled (scrubbed of dashes/emoji)
+- `needs_clarification` + `clarification_question` — set only when the request is genuinely too vague (e.g. no caption)
+- `style` — `hype` | `sad` | `chill` | `funny` | `cinematic` (the rendering scaffold)
+- `music_query` — Jamendo search query (always set; derived from explicit request, theme, or style)
+- `keep_original_audio` — true only if the user asks; else the music plays and source is muted
+- `speed` — `slow` (≈0.5x slow-mo) | `normal` | `fast` (applied to single-clip edits only)
+- `color_filter` — `none` | `vibrant` (Shotstack "boost") | `muted` | `bw` (greyscale) | `dramatic` (contrast)
+- `transition` — `cut` | `fade` | `zoom` (between clips; multi-clip only)
+- `text_overlays[]` — `{ text, position: top|center|bottom, color: hex/name (sanitized), uppercase }`
+
+The renderer (`src/templates/index.ts` → `buildEdit(plan, clips, outputSize, musicUrl)`) translates the plan to Shotstack JSON. `STYLE_PRESETS` holds per-style defaults (clip duration in a montage, overlay font scale, a fallback music query).
+
 ## State machine
 
 State names are **past-tense** — each describes what's been completed.
 
-**Video pipeline:** `received → downloaded → matched → submitted → rendered → uploaded → delivered`
+**Video pipeline:** `received → downloaded → matched → submitted → rendered → uploaded → delivered`, with a possible detour `downloaded → awaiting_clarification → downloaded`.
 
 | State | What advance() does | Next |
 |---|---|---|
-| `received` | download all media parts, normalize each with ffmpeg (autorotate + H.264 + cap 1280px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
-| `downloaded` | match template via Anthropic | `matched` |
-| `matched` | build Shotstack edit (R2 clip URLs, output sized to `outputSize`), submit render | `submitted` |
+| `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each with ffmpeg (autorotate + H.264 + cap 1280px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
+| `downloaded` | `planEdit`. If it needs clarification (and we haven't asked yet): send the question | `awaiting_clarification` |
+| `downloaded` | else: send the confirmation + a rough time estimate | `matched` |
+| `awaiting_clarification` | (worker doesn't touch it — parked until the user's text reply, which the webhook routes back here as `result.clarificationAnswer` + state `downloaded`) | — |
+| `matched` | resolve the music query via Jamendo (`resolveMusicUrl`, fallback to a Shotstack-CDN track), `buildEdit(plan, …)`, submit render | `submitted` |
 | `submitted` | poll render status; self-loop (5s) until `done` | `rendered` |
 | `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
-| `uploaded` | send video reply via Linq | `delivered` |
+| `uploaded` | send video reply via Linq with a "here's ur {style} edit" caption | `delivered` |
 
-**Chat pipeline:** `received → replied` — `advanceChatJob` loads recent chat history + the most recent video job's status for this `chatId`, calls Claude (Sonnet 4.6) for a conversational reply, sends it via `sendTextReply`, stores it in `result.reply`. See `src/services/chat.ts`.
+**Chat pipeline:** `received → replied` — `advanceChatJob` loads recent chat history + the most recent video job's status, calls Claude (Sonnet 4.6) for a conversational reply, sends it, stores it in `result.reply`. See `src/services/chat.ts`.
 
-Terminal states: `delivered` (video success), `replied` (chat success), `failed` (error path, `error` populated). The worker's claim SQL and recovery sweep treat all three as terminal.
+**Status messages the user gets:** instant ack on a video webhook ("got it, lemme look at this"); then either the clarification question or the confirmation+estimate after `planEdit`; then the video with "here's ur {style} edit"; on any failure, a friendly message ("ah that one broke on me, mind trying again?" or "i can only edit videos and photos rn"). Sent by the webhook handler and the worker (`notifyVideoFailure`).
+
+**Clarification multi-turn:** if `planEdit` parks the job in `awaiting_clarification`, the user's next text-only message is routed to that job by the webhook (not the chatbot) — it sets `result.clarificationAnswer` and state back to `downloaded`, so `planEdit` re-runs with the answer (and won't ask again). A new video supersedes a pending clarification (old job → `failed`).
+
+Terminal states: `delivered` (video success), `replied` (chat success), `failed` (error path). `awaiting_clarification` is parked, not terminal. The worker's claim SQL + recovery sweep skip all of `delivered`/`replied`/`failed`/`awaiting_clarification`.
 
 Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
 

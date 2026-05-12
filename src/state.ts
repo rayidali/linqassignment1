@@ -1,12 +1,12 @@
 import { logger } from "./logger.js";
 import { downloadMedia } from "./services/media.js";
-import { matchTemplate } from "./services/match.js";
+import { planEdit } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
 import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
 import { generateReply } from "./services/chat.js";
-import { getTemplate } from "./templates/index.js";
-import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
+import { buildEdit, STYLE_PRESETS } from "./templates/index.js";
+import type { LinqWebhookPayload, EditPlan } from "./schemas.js";
 
 // Used when Jamendo can't resolve a track — there's always a soundtrack.
 const FALLBACK_MUSIC_URL =
@@ -16,6 +16,7 @@ export const STATES = [
   // video pipeline
   "received",
   "downloaded",
+  "awaiting_clarification", // waiting on the user's reply to a clarifying question
   "matched",
   "submitted",
   "rendered",
@@ -29,7 +30,9 @@ export const STATES = [
 
 export type State = (typeof STATES)[number];
 
-export const TERMINAL_STATES: ReadonlySet<State> = new Set(["delivered", "replied", "failed"]);
+// States the worker won't claim: terminal (delivered/replied/failed) plus
+// awaiting_clarification (the job is parked until the user replies).
+export const WORKER_SKIP_STATES = ["delivered", "replied", "failed", "awaiting_clarification"] as const;
 
 export type JobRow = {
   id: string;
@@ -59,6 +62,11 @@ type ClipDownload = {
   filename: string;
 };
 
+function captionOf(payload: LinqWebhookPayload): string {
+  const text = payload.data.parts.find((p) => p.type === "text");
+  return text && text.type === "text" ? text.value : "";
+}
+
 export async function advance(job: JobRow): Promise<AdvanceResult> {
   logger.debug({ jobId: job.id, jobType: job.type, fromState: job.state }, "advancing");
   if (job.type === "chat") {
@@ -74,10 +82,9 @@ async function advanceChatJob(job: JobRow): Promise<AdvanceResult> {
   const log = logger.child({ jobId: job.id, jobType: "chat" });
   const payload = job.payload as LinqWebhookPayload;
   const chatId = job.chatId ?? payload.data.chat.id;
-  const textPart = payload.data.parts.find((p) => p.type === "text");
-  const userText = textPart && textPart.type === "text" ? textPart.value.trim() : "(empty message)";
+  const userText = captionOf(payload).trim() || "(empty message)";
 
-  const reply = await generateReply(job.id, chatId, userText || "(empty message)");
+  const reply = await generateReply(job.id, chatId, userText);
   await sendTextReply(chatId, reply, job.id);
   log.info("chat reply sent");
   return { nextState: "replied", resultPatch: { userText, reply } };
@@ -87,22 +94,23 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
   const log = logger.child({ jobId: job.id, jobType: "video", fromState: job.state });
   const payload = job.payload as LinqWebhookPayload;
   const result = (job.result ?? {}) as Record<string, unknown>;
+  const chatId = job.chatId ?? payload.data.chat.id;
 
   switch (job.state) {
     case "received": {
-      type MediaPart = Extract<
-        LinqWebhookPayload["data"]["parts"][number],
-        { type: "media" }
-      >;
-      const mediaParts: MediaPart[] = payload.data.parts.filter(
-        (p): p is MediaPart => p.type === "media",
+      type MediaPart = Extract<LinqWebhookPayload["data"]["parts"][number], { type: "media" }>;
+      const usable: MediaPart[] = payload.data.parts.filter(
+        (p): p is MediaPart =>
+          p.type === "media" &&
+          (p.mime_type.toLowerCase().startsWith("video/") ||
+            p.mime_type.toLowerCase().startsWith("image/")),
       );
-      if (mediaParts.length === 0) {
-        return { nextState: "failed", error: "no media in webhook payload" };
+      if (usable.length === 0) {
+        return { nextState: "failed", error: "no editable video or photo in the message" };
       }
-      log.info({ clipCount: mediaParts.length }, "downloading + normalizing all media parts");
+      log.info({ clipCount: usable.length }, "downloading + normalizing all media parts");
       const downloads = await Promise.all(
-        mediaParts.map((p) => downloadMedia(job.id, p.url, p.filename, p.mime_type)),
+        usable.map((p) => downloadMedia(job.id, p.url, p.filename, p.mime_type)),
       );
       const clips: ClipDownload[] = downloads.map((d, i) => ({
         r2Key: d.key,
@@ -111,8 +119,8 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         contentType: d.contentType,
         width: d.width,
         height: d.height,
-        sourceUrl: mediaParts[i]!.url,
-        filename: mediaParts[i]!.filename,
+        sourceUrl: usable[i]!.url,
+        filename: usable[i]!.filename,
       }));
       const first = clips[0]!;
       return {
@@ -122,17 +130,34 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
     }
 
     case "downloaded": {
-      const text = payload.data.parts.find((p) => p.type === "text");
-      const prompt = text && text.type === "text" ? text.value : "";
-      const choice = await matchTemplate(job.id, prompt);
-      return { nextState: "matched", resultPatch: { choice } };
+      const clipCount = (result.clips as ClipDownload[] | undefined)?.length ?? 1;
+      const clarificationAnswer = result.clarificationAnswer as string | undefined;
+      const clarificationCount = (result.clarificationCount as number | undefined) ?? 0;
+      const plan = await planEdit(job.id, {
+        caption: captionOf(payload),
+        clarificationAnswer,
+        clipCount,
+      });
+
+      const shouldAskClarification =
+        plan.needs_clarification && Boolean(plan.clarification_question) && clarificationCount < 1;
+      if (shouldAskClarification) {
+        await sendTextReply(chatId, plan.clarification_question, `${job.id}-clarify-${clarificationCount}`);
+        return {
+          nextState: "awaiting_clarification",
+          resultPatch: { plan, clarificationCount: clarificationCount + 1 },
+        };
+      }
+
+      const estimate = clipCount > 1 ? "should be ~2 min" : "should be ~1 min";
+      await sendTextReply(chatId, `${plan.confirmation}, ${estimate}`, `${job.id}-confirm`);
+      return { nextState: "matched", resultPatch: { plan } };
     }
 
     case "matched": {
-      const choice = result.choice as TemplateChoice;
-      const tpl = getTemplate(choice.template_id);
-      if (!tpl) {
-        return { nextState: "failed", error: `unknown template_id: ${choice.template_id}` };
+      const plan = result.plan as EditPlan | undefined;
+      if (!plan) {
+        return { nextState: "failed", error: "missing edit plan" };
       }
       const clips = (result.clips as ClipDownload[] | undefined) ?? [];
       const clipUrls = clips
@@ -144,25 +169,25 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       const outputSize =
         (result.outputSize as { width: number; height: number } | undefined) ?? undefined;
 
-      // Resolve music: user-requested query if any, else the chosen template's
-      // default track. Always end up with *some* soundtrack (fallback URL).
-      const reqQuery = choice.requested_music_query?.trim() || null;
       const musicQuery =
-        reqQuery ?? tpl.music_options.find((m) => m.id === choice.music_id)?.jamendoQuery ?? null;
-      const resolvedMusic = musicQuery ? await resolveMusicUrl(job.id, musicQuery) : null;
+        plan.music_query?.trim() || STYLE_PRESETS[plan.style].fallbackMusicQuery;
+      const resolvedMusic = await resolveMusicUrl(job.id, musicQuery);
       const musicUrl = resolvedMusic ?? FALLBACK_MUSIC_URL;
 
       log.info(
         {
           clipCount: clipUrls.length,
-          template: choice.template_id,
+          style: plan.style,
           outputSize,
           musicQuery,
           musicResolved: Boolean(resolvedMusic),
+          transition: plan.transition,
+          colorFilter: plan.color_filter,
+          speed: plan.speed,
         },
         "building Shotstack edit",
       );
-      const edit = tpl.buildEdit(clipUrls, choice, outputSize, musicUrl);
+      const edit = buildEdit(plan, clipUrls, outputSize, musicUrl);
       const renderId = await submitRender(job.id, edit);
       return {
         nextState: "submitted",
@@ -194,9 +219,10 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
     }
 
     case "uploaded": {
-      const chatId = job.chatId ?? payload.data.chat.id;
       const attachmentId = result.attachmentId as string;
-      await sendVideoReply(job.id, chatId, attachmentId);
+      const style = (result.plan as EditPlan | undefined)?.style;
+      const caption = style ? `here's ur ${style} edit` : "here u go";
+      await sendVideoReply(job.id, chatId, attachmentId, caption);
       return { nextState: "delivered" };
     }
 

@@ -5,6 +5,7 @@ import { LinqWebhookPayload } from "./schemas.js";
 import { env } from "./env.js";
 import { verifyLinqSignature } from "./linq-signature.js";
 import { checkAccess } from "./services/access.js";
+import { sendTextReply } from "./services/linq.js";
 
 export const webhookRouter = Router();
 
@@ -86,6 +87,40 @@ webhookRouter.post(
       return res.status(200).json({ accessDenied: access.reason });
     }
 
+    // A text-only message while a video job for this chat is parked awaiting a
+    // clarification answer → this IS the answer. Feed it back to that job
+    // instead of starting a chatbot conversation.
+    if (!hasMedia) {
+      const awaiting = await prisma.job.findFirst({
+        where: { chatId, type: "video", state: "awaiting_clarification" },
+        orderBy: { createdAt: "desc" },
+      });
+      if (awaiting) {
+        const prev = (awaiting.result ?? {}) as Record<string, unknown>;
+        await prisma.job.update({
+          where: { id: awaiting.id },
+          data: {
+            state: "downloaded",
+            claimedAt: null,
+            claimedBy: null,
+            result: { ...prev, clarificationAnswer: messageText } as object,
+          },
+        });
+        logger.info({ jobId: awaiting.id, chatId }, "routed clarification answer to awaiting job");
+        res.status(200).json({ clarificationRoutedTo: awaiting.id });
+        void sendTextReply(chatId, "k one sec", `${awaiting.id}-clarify-ack`).catch(() => {});
+        return;
+      }
+    }
+
+    // A new video supersedes any still-pending clarification for this chat.
+    if (hasMedia) {
+      await prisma.job.updateMany({
+        where: { chatId, type: "video", state: "awaiting_clarification" },
+        data: { state: "failed", error: "superseded by a new video" },
+      });
+    }
+
     try {
       const job = await prisma.job.upsert({
         where: { externalId: data.event_id },
@@ -102,7 +137,12 @@ webhookRouter.post(
         { jobId: job.id, externalId: data.event_id, type: jobType, chatId, state: job.state },
         "webhook accepted",
       );
-      return res.status(200).json({ jobId: job.id });
+      res.status(200).json({ jobId: job.id });
+      // Instant acknowledgment for video jobs (the pipeline takes ~1-2 min).
+      if (jobType === "video" && job.state === "received") {
+        void sendTextReply(chatId, "got it, lemme look at this", `${job.id}-ack`).catch(() => {});
+      }
+      return;
     } catch (err) {
       logger.error({ err, externalId: data.event_id }, "webhook upsert failed");
       return res.status(500).json({ error: "internal error" });
