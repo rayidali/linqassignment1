@@ -14,14 +14,36 @@ function getClient(): Anthropic {
   return _client;
 }
 
-const SYSTEM = `You are an AI video editor that works over iMessage. Users text you one or more short video clips (or photos) plus a caption describing the vibe they want, and you reply with a TikTok-style edited video — hype montages, emotional edits, chill/aesthetic, funny/meme cuts. You can stitch multiple clips, overlay text, and match the output to the source orientation.
+// Voice rules for ALL user-facing text (chatbot now; the mastermind matcher's
+// messages later). Casual, sounds like a real person texting, never like an AI.
+const STYLE_RULES = `how you write (strict):
+- sound like a real gen z person texting a friend, NOT like an AI assistant or customer service bot
+- NO dashes of any kind. no "—", no "–", no "-" used as punctuation
+- NO emojis at all
+- keep it short, usually one or two lines. lowercase is fine. contractions and light slang (u, rn, tbh, ngl, lowkey, fr) are good but don't overdo it or be cringe
+- no markdown, no bullet points, no headers, no formal structure. it's a text message
+- no sign-offs, no "let me know if you need anything else", no "feel free to" type filler`;
 
-You are CHATTING with a user right now (they sent a text-only message, not media). Respond like a text message: friendly, concise (1–3 short sentences), casual, emoji ok.
+const SYSTEM = `you run an AI video editor over text. people send u video clips or photos plus a caption of the vibe they want, and u send back a tiktok style edit (hype montages, sad/emotional, aesthetic chill, funny/meme cuts, stitched clips, text overlays, matches the source orientation).
 
-- If they ask what you can do: explain briefly and tell them to send a video/photo with a caption.
-- If they're off-topic: gently steer back to video editing.
-- If there's an edit in progress for this user (you'll be told): share the status. You can't change an edit that's already rendering — tell them to send a new message after it finishes if they want changes.
-- Don't be verbose. No markdown, no bullet lists — this is SMS.`;
+right now ur just texting with someone (they sent text, no media).
+
+${STYLE_RULES}
+
+what to actually say:
+- if they ask what u do: tell them quick and say to send a video or photo with a caption of the vibe
+- if they go off topic: vibe with it for a sec then bring it back to video editing
+- if theres an edit in progress for them (u'll be told): let them know its cooking, usually takes about a min
+- if they ask u to change an edit thats already rendering: tell them u cant change that one now but they can resend with new instructions once its done`;
+
+// Belt-and-suspenders: strip em/en dashes and emoji even if the model slips.
+function scrubStyle(text: string): string {
+  return text
+    .replace(/[—–]/g, ", ")
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
 
 type HistoryTurn = { role: "user" | "assistant"; content: string };
 
@@ -92,15 +114,16 @@ export async function generateReply(
   const response = await getClient().messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 300,
-    system: `${SYSTEM}\n\nCurrent context: ${renderNote}`,
+    system: `${SYSTEM}\n\ncontext for this reply: ${renderNote}`,
     messages,
   });
 
   const block = response.content.find((b) => b.type === "text");
-  const reply = block && block.type === "text" ? block.text.trim() : "";
-  if (!reply) {
+  const raw = block && block.type === "text" ? block.text.trim() : "";
+  if (!raw) {
     throw new Error("Anthropic chat response had no text content");
   }
+  const reply = scrubStyle(raw);
   log.info({ replyPreview: reply.slice(0, 80) }, "chat reply generated");
-  return reply;
+  return reply || "ngl my brain glitched, say that again?";
 }
