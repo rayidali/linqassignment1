@@ -39,6 +39,17 @@ Relative imports must end in `.js` (ESM/NodeNext rule), even though source files
 
 `Job.type` is `"video"` (has ≥1 media part) or `"chat"` (text-only message). The webhook decides this; `advance()` branches on it. `Job.chatId` is the Linq chat ID (extracted from the payload), indexed for conversation-history queries.
 
+## Access control (`src/services/access.ts`)
+
+The webhook runs `checkAccess()` before creating a Job. It tracks senders in the `Sender` table (keyed on the Linq `sender_handle.handle` — E.164 phone or email):
+- **First-use opt-in:** a brand-new sender gets a "reply OK to start" prompt; replying OK/yes/etc. flips them to `opted_in` and sends a welcome. Until then, no Jobs are created for them.
+- **`ACCESS_ALLOWLIST` env var:** comma-separated handles that are auto-`opted_in` on first contact and exempt from the per-minute limit (the dev's test phone goes here so testing isn't interrupted).
+- **Per-sender video rate limits:** 50 video edits per UTC day (`videosToday`/`videosTodayDate` on `Sender`), and ≥60s between videos (skipped for allowlisted handles).
+- **System-wide budget:** ≤200 video Jobs per UTC day (a `count` query on `Job` where `type=video`).
+- Chat messages from opted-in senders are not rate-limited (cheap). All limit replies are static, gen-z-styled strings (no dashes/emoji).
+
+The webhook also dedups on `Job.externalId` (a `findUnique` before `checkAccess`) so Linq's webhook retries don't re-run access checks or double-bump counters.
+
 ## State machine
 
 State names are **past-tense** — each describes what's been completed.

@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { LinqWebhookPayload } from "./schemas.js";
 import { env } from "./env.js";
 import { verifyLinqSignature } from "./linq-signature.js";
+import { checkAccess } from "./services/access.js";
 
 export const webhookRouter = Router();
 
@@ -55,6 +56,35 @@ webhookRouter.post(
     // Has at least one media part → video edit. Otherwise → chat message.
     const hasMedia = data.data.parts.some((p) => p.type === "media");
     const jobType = hasMedia ? "video" : "chat";
+    const handle = data.data.sender_handle?.handle ?? null;
+    const service = data.data.sender_handle?.service ?? null;
+    const textPart = data.data.parts.find((p) => p.type === "text");
+    const messageText = textPart && textPart.type === "text" ? textPart.value : "";
+
+    // Dedup: if we've already created a job for this event, no-op (covers
+    // Linq's webhook retries without re-running access checks / counters).
+    const existing = await prisma.job.findUnique({
+      where: { externalId: data.event_id },
+      select: { id: true },
+    });
+    if (existing) {
+      return res.status(200).json({ jobId: existing.id, dedup: true });
+    }
+
+    // Access control: first-use opt-in, per-sender rate limits, system budget.
+    // checkAccess sends any user-facing reply itself.
+    const access = await checkAccess({
+      chatId,
+      handle,
+      service,
+      isMediaMessage: hasMedia,
+      messageText,
+      eventId: data.event_id,
+    });
+    if (!access.allow) {
+      logger.info({ handle, chatId, reason: access.reason }, "webhook: access not granted");
+      return res.status(200).json({ accessDenied: access.reason });
+    }
 
     try {
       const job = await prisma.job.upsert({

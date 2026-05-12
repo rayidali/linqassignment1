@@ -26,6 +26,10 @@ const EnvSchema = z.object({
   R2_PUBLIC_BASE_URL: optionalUrl(),
 
   JAMENDO_CLIENT_ID: optionalString(),
+
+  // Comma-separated handles (E.164 phones / emails) that are auto-opted-in
+  // and exempt from the per-minute video rate limit. e.g. "+18647654848"
+  ACCESS_ALLOWLIST: optionalString(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
