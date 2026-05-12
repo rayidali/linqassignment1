@@ -4,7 +4,7 @@ import { downloadMedia, type DownloadResult } from "./services/media.js";
 import { planEdit } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
-import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
+import { uploadAttachment, sendVideoReply, sendTextReply, startTyping } from "./services/linq.js";
 import { generateReply, classifyTweakRequest } from "./services/chat.js";
 import { buildEdit, STYLE_PRESETS, PACE_TO_CLIP_SECONDS } from "./templates/index.js";
 import type { LinqWebhookPayload, EditPlan } from "./schemas.js";
@@ -117,6 +117,7 @@ async function advanceChatJob(job: JobRow): Promise<AdvanceResult> {
   const payload = job.payload as LinqWebhookPayload;
   const chatId = job.chatId ?? payload.data.chat.id;
   const userText = captionOf(payload).trim() || "(empty message)";
+  await startTyping(chatId);
 
   // Is this a tweak of their most recent delivered edit? If so, spin off a
   // refinement video job — it re-renders from the already-normalized clips on
@@ -189,6 +190,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         return { nextState: "failed", error: "no editable video or photo in the message" };
       }
       log.info({ clipCount: usable.length }, "downloading + normalizing all media parts");
+      await startTyping(chatId);
       // Sequentially, NOT in parallel: each ffmpeg transcode is CPU- and
       // memory-heavy and the instance is a single core — running them
       // concurrently just thrashes the CPU and risks an OOM kill.
@@ -221,6 +223,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       const clarificationCount = (result.clarificationCount as number | undefined) ?? 0;
       const priorPlan = result.priorPlan as EditPlan | undefined;
 
+      await startTyping(chatId);
       const plan = await planEdit(job.id, {
         caption: isRefinement
           ? (result.priorCaption as string | undefined) ?? ""
@@ -366,6 +369,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
 
     case "rendered": {
       const videoUrl = result.videoUrl as string;
+      await startTyping(chatId);
       const attachmentId = await uploadAttachment(job.id, videoUrl, "edited.mp4");
       return { nextState: "uploaded", resultPatch: { attachmentId } };
     }

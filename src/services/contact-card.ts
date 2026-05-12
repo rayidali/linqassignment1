@@ -8,9 +8,9 @@ import { fetchWithTimeout } from "../http.js";
 const LINQ_BASE = "https://api.linqapp.com/api/partner/v3";
 const LOGO_R2_KEY = "assets/contact-card-logo.png";
 
-// Brand name shown on the contact card (Apple displays "first last").
-const CARD_FIRST_NAME = "iMessage Video";
-const CARD_LAST_NAME = "Editor";
+// Brand name shown on the contact card / iOS "Maybe: …" suggestion.
+const CARD_FIRST_NAME = "iEdit";
+const CARD_LAST_NAME = ""; // single-word brand — no last name
 
 // Square version of the brand mark (blue speech bubble + play triangle, on white).
 const LOGO_SVG =
@@ -50,10 +50,8 @@ export async function setupContactCard(): Promise<void> {
   }
   try {
     const imageUrl = await uploadLogo();
-    const cardFields: Record<string, string> = {
-      first_name: CARD_FIRST_NAME,
-      last_name: CARD_LAST_NAME,
-    };
+    const cardFields: Record<string, string> = { first_name: CARD_FIRST_NAME };
+    if (CARD_LAST_NAME) cardFields.last_name = CARD_LAST_NAME;
     if (imageUrl) cardFields.image_url = imageUrl;
     const headers = { "Content-Type": "application/json", Authorization: bearer() };
 
@@ -75,7 +73,7 @@ export async function setupContactCard(): Promise<void> {
       return;
     }
     logger.info(
-      { name: `${CARD_FIRST_NAME} ${CARD_LAST_NAME}`, imageUrl },
+      { name: [CARD_FIRST_NAME, CARD_LAST_NAME].filter(Boolean).join(" "), imageUrl },
       "contact card configured",
     );
   } catch (err) {

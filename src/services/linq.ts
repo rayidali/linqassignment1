@@ -137,6 +137,25 @@ export async function sendTextReply(
   logger.info({ chatId, textPreview: text.slice(0, 60) }, "Linq text reply sent");
 }
 
+// Shows the "typing…" indicator in the chat. iMessage clears it when we send
+// the next message (or it times out after a few seconds), so there's no need
+// to "stop" it. Best-effort: 403 in group chats, etc. — never throws, so
+// callers can just `await startTyping(chatId)` with no guard.
+export async function startTyping(chatId: string): Promise<void> {
+  try {
+    const res = await fetchWithTimeout(`${LINQ_BASE}/chats/${chatId}/typing`, {
+      method: "POST",
+      headers: { Authorization: bearer() },
+    });
+    if (!res.ok) logger.debug({ chatId, status: res.status }, "typing indicator not shown");
+  } catch (err) {
+    logger.debug(
+      { chatId, err: err instanceof Error ? err.message : String(err) },
+      "typing indicator request failed",
+    );
+  }
+}
+
 // Shares the partner's configured contact card (see services/contact-card.ts)
 // into a chat — an Apple-native "Add to Contacts" card so the user can save us
 // with a name instead of a bare phone number.

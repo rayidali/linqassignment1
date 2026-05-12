@@ -1,6 +1,6 @@
-# iMessage AI Video Editor
+# iEdit — an AI video editor that lives in iMessage
 
-Text a few clips and a caption to a phone number; get back a TikTok-style edited video with music — the cut, the soundtrack, the text overlays, the color grade, all picked by an LLM that actually understands what you asked for.
+Text a few clips and a caption to a phone number; get back a TikTok-style edited video with music — the cut, the soundtrack, the text overlays, the color grade, all picked by an LLM that actually understands what you asked for. Don't like it? Text back "make the text yellow" and you get the revised one.
 
 > "christmas edit with bold text" → festive montage, "Jingle Bells", red uppercase overlays.
 > "slow-mo cinematic black and white" → 0.5× speed, dramatic grade, greyscale, moody music.

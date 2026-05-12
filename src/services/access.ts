@@ -13,10 +13,10 @@ const OPT_IN_WORDS = new Set([
 
 const MSG = {
   optInPrompt:
-    `yo this is an AI video editor demo. u send video clips or pics + a caption like "hype gym edit" ` +
+    `yo this is iEdit, an AI video editor demo. u send video clips or pics + a caption like "hype gym edit" ` +
     `and i text back a short edited video with music, text, transitions, the works. reply OK to start`,
   welcome:
-    `u good. quick rundown so u know what im about:\n\n` +
+    `u good. quick rundown on iEdit:\n\n` +
     `im an AI video editor. send me video clips and or photos (1 or more, any mix) with a caption of the vibe u want, ` +
     `and i text u back a finished short edit with music, text overlays, color, transitions, all of it.\n\n` +
     `captions that work great:\n` +
