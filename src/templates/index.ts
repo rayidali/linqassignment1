@@ -94,21 +94,47 @@ function videoTrack(
   };
 }
 
+type OverlayStyle = { uppercase: boolean; fontScale: number };
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Text overlays as `html` assets (not `title`, which doesn't wrap): a box
+// sized relative to the frame, flex-centered, with wrapping text — so a long
+// caption never runs off the edges. Font size scales to the frame's short
+// side so portrait and landscape look comparable.
 function titleTrack(
   overlays: TemplateChoice["text_overlays"],
-  style: string,
-  size: string,
+  outputW: number,
+  outputH: number,
+  style: OverlayStyle,
 ): ShotstackEdit["timeline"]["tracks"][number] {
+  const fontSize = Math.max(18, Math.round(Math.min(outputW, outputH) * style.fontScale));
+  const boxW = Math.round(outputW * 0.92);
+  const boxH = Math.round(outputH * 0.5);
+  const css =
+    `body{margin:0}` +
+    `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
+    `p{margin:0;max-width:100%;font-family:"Montserrat","Open Sans",Helvetica,Arial,sans-serif;` +
+    `font-weight:800;font-size:${fontSize}px;line-height:1.15;color:#ffffff;text-align:center;` +
+    `text-shadow:0 3px 14px rgba(0,0,0,0.75);word-wrap:break-word;overflow-wrap:break-word;` +
+    (style.uppercase ? `text-transform:uppercase;` : ``) +
+    `}`;
   return {
     clips: overlays.map((o) => ({
       asset: {
-        type: "title",
-        text: o.text,
-        style,
-        size,
-        position: "center",
-        color: "#ffffff",
+        type: "html",
+        html: `<div class="wrap"><p>${escapeHtml(o.text)}</p></div>`,
+        css,
+        width: boxW,
+        height: boxH,
       },
+      position: "center",
       // Clamp to a safe window — we may not know the final video length
       // (single clip uses "auto").
       start: Math.max(0, Math.min(o.timestamp, 8)),
@@ -129,17 +155,17 @@ function commonBuildEdit(
   clips: string[],
   choice: TemplateChoice,
   perClipS: number,
-  titleStyle: string,
-  titleSize: string,
+  overlayStyle: OverlayStyle,
   outputSize?: OutputSize,
   musicUrl?: string,
   // Omit for a hard cut between clips (the default). Pass e.g.
   // { in: "fade", out: "fade" } to opt this template into transitions.
   transition?: { in?: string; out?: string },
 ): ShotstackEdit {
+  const size = outputSize ?? { width: 720, height: 1280 };
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (choice.text_overlays.length > 0) {
-    tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize));
+    tracks.push(titleTrack(choice.text_overlays, size.width, size.height, overlayStyle));
   }
   tracks.push(videoTrack(clips, perClipS, Boolean(musicUrl), transition));
   return {
@@ -171,7 +197,7 @@ export const TEMPLATES: Template[] = [
     ],
     text_slot_count: 2,
     buildEdit: (clips, choice, outputSize, musicUrl) =>
-      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large", outputSize, musicUrl),
+      commonBuildEdit(clips, choice, HYPE_CLIP_S, { uppercase: true, fontScale: 0.085 }, outputSize, musicUrl),
   },
   {
     id: "tmpl_sad_emotional",
@@ -191,7 +217,7 @@ export const TEMPLATES: Template[] = [
     ],
     text_slot_count: 1,
     buildEdit: (clips, choice, outputSize, musicUrl) =>
-      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium", outputSize, musicUrl),
+      commonBuildEdit(clips, choice, SAD_CLIP_S, { uppercase: false, fontScale: 0.05 }, outputSize, musicUrl),
   },
   {
     id: "tmpl_aesthetic_chill",
@@ -211,7 +237,7 @@ export const TEMPLATES: Template[] = [
     ],
     text_slot_count: 1,
     buildEdit: (clips, choice, outputSize, musicUrl) =>
-      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small", outputSize, musicUrl),
+      commonBuildEdit(clips, choice, CHILL_CLIP_S, { uppercase: false, fontScale: 0.045 }, outputSize, musicUrl),
   },
   {
     id: "tmpl_funny_meme",
@@ -231,7 +257,7 @@ export const TEMPLATES: Template[] = [
     ],
     text_slot_count: 2,
     buildEdit: (clips, choice, outputSize, musicUrl) =>
-      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium", outputSize, musicUrl),
+      commonBuildEdit(clips, choice, FUNNY_CLIP_S, { uppercase: true, fontScale: 0.08 }, outputSize, musicUrl),
   },
 ];
 
