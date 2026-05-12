@@ -1,7 +1,7 @@
 import { Upload } from "@aws-sdk/lib-storage";
 import { logger } from "../logger.js";
 import { getR2Client, getR2Bucket, r2PublicUrl } from "../r2.js";
-import { fetchAndNormalize } from "./transcode.js";
+import { fetchAndNormalize, fetchAndNormalizeImage } from "./transcode.js";
 
 export type DownloadResult = {
   key: string;
@@ -12,16 +12,21 @@ export type DownloadResult = {
   height: number;
 };
 
-// Fetches the user's media from Linq's presigned URL, normalizes it with
-// ffmpeg (autorotate, transcode to H.264, cap at 1280px), and uploads the
-// clean MP4 to R2. Returns the R2 key + true display dimensions.
+// Fetches a media part from Linq's presigned URL and normalizes it into a
+// clean H.264 MP4 clip uploaded to R2 — videos via ffmpeg (autorotate +
+// transcode + cap 1280px), still images via sharp (HEIC decode + EXIF
+// auto-rotate + resize) looped into a short clip. Returns R2 key + dims.
 export async function downloadMedia(
   jobId: string,
   url: string,
   filename: string,
+  mimeType: string,
 ): Promise<DownloadResult> {
-  logger.info({ jobId, url, filename }, "downloading + normalizing media");
-  const { buffer, width, height } = await fetchAndNormalize(jobId, url);
+  const isImage = mimeType.toLowerCase().startsWith("image/");
+  logger.info({ jobId, url, filename, mimeType, isImage }, "downloading + normalizing media");
+  const { buffer, width, height } = isImage
+    ? await fetchAndNormalizeImage(jobId, url)
+    : await fetchAndNormalize(jobId, url);
 
   const base =
     filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_") || "media";

@@ -68,7 +68,7 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
       }
       log.info({ clipCount: mediaParts.length }, "downloading + normalizing all media parts");
       const downloads = await Promise.all(
-        mediaParts.map((p) => downloadMedia(job.id, p.url, p.filename)),
+        mediaParts.map((p) => downloadMedia(job.id, p.url, p.filename, p.mime_type)),
       );
       const clips: ClipDownload[] = downloads.map((d, i) => ({
         r2Key: d.key,

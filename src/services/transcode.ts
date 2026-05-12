@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { createReadStream, createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import ffmpegStatic from "ffmpeg-static";
+import sharp from "sharp";
 import { logger } from "../logger.js";
 
 // ffmpeg-static's CJS default export resolves to the binary path at runtime
@@ -13,12 +14,20 @@ import { logger } from "../logger.js";
 const FFMPEG_PATH = ffmpegStatic as unknown as string | null;
 const TRANSCODE_TIMEOUT_MS = 180_000;
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
+// How long a still image plays as a clip. Multi-clip montages trim each clip
+// to the template's per-clip duration anyway; a single image plays the full
+// duration. 6s comfortably exceeds our longest template clip (5s).
+const IMAGE_CLIP_DURATION_S = 6;
 
 export type NormalizedVideo = {
   buffer: Buffer;
   width: number;
   height: number;
 };
+
+function makeEven(n: number): number {
+  return n % 2 === 0 ? n : Math.max(2, n - 1);
+}
 
 // Downloads a video from a URL into a temp file, then runs ffmpeg to:
 //  - apply rotation metadata (autorotate is ON by default — fixes iPhone
@@ -76,6 +85,62 @@ export async function fetchAndNormalize(
       "transcode complete",
     );
     return { buffer, width: dims.width, height: dims.height };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// Turns a still image (JPEG/PNG/HEIC/etc.) into a clean MP4 clip:
+//  - sharp decodes (including HEIC, which ffmpeg-static can't), auto-rotates
+//    from EXIF orientation, resizes to fit within 1280x1280 (no enlarging),
+//    re-encodes as JPEG
+//  - ffmpeg loops that JPEG into an IMAGE_CLIP_DURATION_S-second H.264 video
+// Returns the MP4 bytes + dims (matching the resized image's orientation).
+export async function fetchAndNormalizeImage(
+  jobId: string,
+  sourceUrl: string,
+): Promise<NormalizedVideo> {
+  if (!FFMPEG_PATH) {
+    throw new Error("ffmpeg-static binary not available");
+  }
+  const dir = await mkdtemp(join(tmpdir(), `img-${jobId.slice(0, 8)}-`));
+  const jpgPath = join(dir, "img.jpg");
+  const outPath = join(dir, "out.mp4");
+  try {
+    const res = await fetch(sourceUrl);
+    if (!res.ok) {
+      throw new Error(`fetch image failed: ${res.status} ${res.statusText}`);
+    }
+    const inputBuf = Buffer.from(await res.arrayBuffer());
+    if (inputBuf.length > MAX_INPUT_BYTES) {
+      throw new Error(`image too large: ${inputBuf.length} bytes`);
+    }
+    const { data, info } = await sharp(inputBuf)
+      .rotate() // auto-rotate from EXIF orientation tag
+      .resize(1280, 1280, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 85 })
+      .toBuffer({ resolveWithObject: true });
+    await writeFile(jpgPath, data);
+    const width = makeEven(info.width);
+    const height = makeEven(info.height);
+    logger.info({ jobId, sourceUrl, width, height }, "image decoded + rotated + resized, building clip");
+
+    const args = [
+      "-y",
+      "-loop", "1",
+      "-i", jpgPath,
+      "-t", String(IMAGE_CLIP_DURATION_S),
+      "-r", "30",
+      "-vf", `scale=${width}:${height},format=yuv420p`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
+      "-movflags", "+faststart",
+      outPath,
+    ];
+    await runFfmpeg(FFMPEG_PATH, args);
+
+    const buffer = await readFileToBuffer(outPath);
+    logger.info({ jobId, width, height, bytes: buffer.length }, "image clip built");
+    return { buffer, width, height };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }

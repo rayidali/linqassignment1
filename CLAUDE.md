@@ -54,7 +54,11 @@ Terminal states: `delivered` (success), `failed` (error path, `error` populated)
 
 Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
 
-**Rotation/orientation handling:** Shotstack (neither Ingest nor the render engine) applies the rotation metadata that iPhone portrait videos carry (they store a landscape frame + a `rotate 90°` display matrix). So in `received` we run every clip through ffmpeg (`ffmpeg-static`), which `-autorotate`s (default on) — baking the rotation into the pixels, setting `rotate=0`, transcoding HEVC→H.264, capping the long side at 1280px. The normalized output's dimensions are the true display dims; the first clip's dims size the render output. So output orientation always matches the (first) source video. See `src/services/transcode.ts`.
+**Media normalization (`src/services/transcode.ts`):** every uploaded media part is normalized to a clean H.264 MP4 clip *before* it touches Shotstack.
+- **Videos** → ffmpeg with `-autorotate` (default on) bakes rotation into the pixels (iPhone portrait videos store a landscape frame + a `rotate 90°` display matrix that Shotstack — neither Ingest nor render — applies), transcodes HEVC→H.264, caps the long side at 1280px, faststart.
+- **Images** (`image/*`) → `sharp` decodes (including HEIC, which ffmpeg-static can't), auto-rotates from EXIF orientation, resizes to fit within 1280×1280; ffmpeg then loops it into a 6-second clip.
+
+Either way the result is a uniform video clip. The first clip's normalized dimensions size the render output, so output orientation always matches the (first) source — portrait→portrait, landscape→landscape, image or video.
 
 `advance(job)` is in `src/state.ts`. Pure async: takes the job, runs the side effect for the current state, returns next state + a result patch (shallow-merged into `job.result`).
 
