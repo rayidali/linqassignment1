@@ -10,6 +10,8 @@ datasource db {
 model Job {
   id          String    @id @default(cuid())
   externalId  String    @unique
+  type        String    @default("video") // "video" | "chat"
+  chatId      String?
   state       String
   payload     Json
   result      Json?
@@ -20,4 +22,5 @@ model Job {
   updatedAt   DateTime  @updatedAt
 
   @@index([state, claimedAt])
+  @@index([chatId, createdAt])
 }

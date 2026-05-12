@@ -18,13 +18,13 @@ async function claimOneJob(): Promise<JobRow | null> {
     SET "claimedAt" = NOW(), "claimedBy" = ${WORKER_ID}
     WHERE id = (
       SELECT id FROM "Job"
-      WHERE state NOT IN ('delivered', 'failed')
+      WHERE state NOT IN ('delivered', 'replied', 'failed')
         AND ("claimedAt" IS NULL OR "claimedAt" < NOW() - INTERVAL '60 seconds')
       ORDER BY "createdAt" ASC
       LIMIT 1
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id, state, payload, result
+    RETURNING id, type, "chatId", state, payload, result
   `;
   return rows[0] ?? null;
 }
@@ -105,7 +105,7 @@ export async function recoverStaleClaims(): Promise<number> {
   const result = await prisma.job.updateMany({
     where: {
       claimedAt: { lt: cutoff },
-      state: { notIn: ["delivered", "failed"] },
+      state: { notIn: ["delivered", "replied", "failed"] },
     },
     data: { claimedAt: null, claimedBy: null },
   });

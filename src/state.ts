@@ -2,11 +2,13 @@ import { logger } from "./logger.js";
 import { downloadMedia } from "./services/media.js";
 import { matchTemplate } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
-import { uploadAttachment, sendVideoReply } from "./services/linq.js";
+import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
+import { generateReply } from "./services/chat.js";
 import { getTemplate } from "./templates/index.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
 
 export const STATES = [
+  // video pipeline
   "received",
   "downloaded",
   "matched",
@@ -14,15 +16,20 @@ export const STATES = [
   "rendered",
   "uploaded",
   "delivered",
+  // chat pipeline
+  "replied",
+  // shared
   "failed",
 ] as const;
 
 export type State = (typeof STATES)[number];
 
-export const TERMINAL_STATES: ReadonlySet<State> = new Set(["delivered", "failed"]);
+export const TERMINAL_STATES: ReadonlySet<State> = new Set(["delivered", "replied", "failed"]);
 
 export type JobRow = {
   id: string;
+  type: string;
+  chatId: string | null;
   state: string;
   payload: unknown;
   result: unknown;
@@ -48,9 +55,31 @@ type ClipDownload = {
 };
 
 export async function advance(job: JobRow): Promise<AdvanceResult> {
-  const log = logger.child({ jobId: job.id, fromState: job.state });
-  log.debug("advancing");
+  logger.debug({ jobId: job.id, jobType: job.type, fromState: job.state }, "advancing");
+  if (job.type === "chat") {
+    return advanceChatJob(job);
+  }
+  return advanceVideoJob(job);
+}
 
+async function advanceChatJob(job: JobRow): Promise<AdvanceResult> {
+  if (job.state !== "received") {
+    throw new Error(`chat job in unexpected state: ${job.state}`);
+  }
+  const log = logger.child({ jobId: job.id, jobType: "chat" });
+  const payload = job.payload as LinqWebhookPayload;
+  const chatId = job.chatId ?? payload.data.chat.id;
+  const textPart = payload.data.parts.find((p) => p.type === "text");
+  const userText = textPart && textPart.type === "text" ? textPart.value.trim() : "(empty message)";
+
+  const reply = await generateReply(job.id, chatId, userText || "(empty message)");
+  await sendTextReply(chatId, reply, job.id);
+  log.info("chat reply sent");
+  return { nextState: "replied", resultPatch: { userText, reply } };
+}
+
+async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
+  const log = logger.child({ jobId: job.id, jobType: "video", fromState: job.state });
   const payload = job.payload as LinqWebhookPayload;
   const result = (job.result ?? {}) as Record<string, unknown>;
 
@@ -80,8 +109,6 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
         sourceUrl: mediaParts[i]!.url,
         filename: mediaParts[i]!.filename,
       }));
-      // Output orientation = first clip's normalized dims (ffmpeg already
-      // baked in rotation, so these are the true display dimensions).
       const first = clips[0]!;
       return {
         nextState: "downloaded",
@@ -144,7 +171,7 @@ export async function advance(job: JobRow): Promise<AdvanceResult> {
     }
 
     case "uploaded": {
-      const chatId = payload.data.chat.id;
+      const chatId = job.chatId ?? payload.data.chat.id;
       const attachmentId = result.attachmentId as string;
       await sendVideoReply(job.id, chatId, attachmentId);
       return { nextState: "delivered" };

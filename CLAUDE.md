@@ -35,11 +35,15 @@ prisma/
 
 Relative imports must end in `.js` (ESM/NodeNext rule), even though source files are `.ts`.
 
+## Job types
+
+`Job.type` is `"video"` (has ≥1 media part) or `"chat"` (text-only message). The webhook decides this; `advance()` branches on it. `Job.chatId` is the Linq chat ID (extracted from the payload), indexed for conversation-history queries.
+
 ## State machine
 
 State names are **past-tense** — each describes what's been completed.
 
-Order: `received → downloaded → matched → submitted → rendered → uploaded → delivered`
+**Video pipeline:** `received → downloaded → matched → submitted → rendered → uploaded → delivered`
 
 | State | What advance() does | Next |
 |---|---|---|
@@ -50,7 +54,9 @@ Order: `received → downloaded → matched → submitted → rendered → uploa
 | `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
 | `uploaded` | send video reply via Linq | `delivered` |
 
-Terminal states: `delivered` (success), `failed` (error path, `error` populated).
+**Chat pipeline:** `received → replied` — `advanceChatJob` loads recent chat history + the most recent video job's status for this `chatId`, calls Claude (Sonnet 4.6) for a conversational reply, sends it via `sendTextReply`, stores it in `result.reply`. See `src/services/chat.ts`.
+
+Terminal states: `delivered` (video success), `replied` (chat success), `failed` (error path, `error` populated). The worker's claim SQL and recovery sweep treat all three as terminal.
 
 Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
 

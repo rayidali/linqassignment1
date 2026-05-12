@@ -51,19 +51,25 @@ webhookRouter.post(
     }
 
     const data = parsed.data;
+    const chatId = data.data.chat.id;
+    // Has at least one media part → video edit. Otherwise → chat message.
+    const hasMedia = data.data.parts.some((p) => p.type === "media");
+    const jobType = hasMedia ? "video" : "chat";
 
     try {
       const job = await prisma.job.upsert({
         where: { externalId: data.event_id },
         create: {
           externalId: data.event_id,
+          type: jobType,
+          chatId,
           state: "received",
           payload: data as object,
         },
         update: {},
       });
       logger.info(
-        { jobId: job.id, externalId: data.event_id, state: job.state },
+        { jobId: job.id, externalId: data.event_id, type: jobType, chatId, state: job.state },
         "webhook accepted",
       );
       return res.status(200).json({ jobId: job.id });
