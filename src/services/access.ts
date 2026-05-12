@@ -1,7 +1,7 @@
 import { prisma } from "../db.js";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
-import { sendTextReply } from "./linq.js";
+import { sendTextReply, shareContactCard } from "./linq.js";
 
 const DAILY_VIDEO_LIMIT_PER_SENDER = 50;
 const MIN_SECONDS_BETWEEN_VIDEOS = 60;
@@ -90,6 +90,10 @@ export async function checkAccess(opts: {
         data: { status: "opted_in", optedInAt: new Date() },
       });
       await sendTextReply(chatId, MSG.welcome, eventId);
+      // Offer an "Add to Contacts" card so the thread shows our name. Best-effort.
+      void shareContactCard(chatId).catch((e) =>
+        log.warn({ err: e instanceof Error ? e.message : String(e) }, "share contact card failed"),
+      );
       log.info("sender opted in");
       return { allow: false, reason: "just opted in" };
     }

@@ -135,3 +135,22 @@ export async function sendTextReply(
   }
   logger.info({ chatId, textPreview: text.slice(0, 60) }, "Linq text reply sent");
 }
+
+// Shares the partner's configured contact card (see services/contact-card.ts)
+// into a chat — an Apple-native "Add to Contacts" card so the user can save us
+// with a name instead of a bare phone number.
+export async function shareContactCard(chatId: string): Promise<void> {
+  const res = await fetch(`${LINQ_BASE}/chats/${chatId}/share_contact_card`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: bearer(),
+    },
+    body: JSON.stringify(env.LINQ_NUMBER ? { phone_number: env.LINQ_NUMBER } : {}),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Linq share contact card failed: ${res.status} ${body}`);
+  }
+  logger.info({ chatId }, "shared contact card");
+}

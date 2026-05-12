@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { webhookRouter } from "./webhook.js";
 import { adminRouter } from "./admin.js";
 import { startWorker, stopWorker, recoverStaleClaims } from "./worker.js";
+import { setupContactCard } from "./services/contact-card.js";
 import { prisma } from "./db.js";
 
 async function main() {
@@ -21,6 +22,9 @@ async function main() {
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, "server listening");
     startWorker();
+    // Configure the Linq contact card (name + logo) in the background — it
+    // logs and swallows its own errors, so this never blocks startup.
+    void setupContactCard();
   });
 
   const shutdown = async (signal: string) => {

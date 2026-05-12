@@ -17,6 +17,9 @@ const EnvSchema = z.object({
 
   LINQ_API_KEY: optionalString(),
   LINQ_WEBHOOK_SECRET: optionalString(),
+  // Our Linq virtual number in E.164 (e.g. "+16504687059") — used for the
+  // contact card so opted-in users can save us with a name.
+  LINQ_NUMBER: optionalString(),
   SHOTSTACK_API_KEY: optionalString(),
   ANTHROPIC_API_KEY: optionalString(),
   R2_ACCOUNT_ID: optionalString(),
