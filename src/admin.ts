@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { prisma } from "./db.js";
 import { env } from "./env.js";
+import { version } from "./version.js";
 
 export const adminRouter = Router();
 
@@ -14,6 +15,12 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
 
 adminRouter.get("/healthz", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+// Unauthenticated on purpose: lets you confirm which build is live with a
+// plain curl (no secret needed) — kills the "am I testing a stale deploy?" doubt.
+adminRouter.get("/version", (_req, res) => {
+  res.json(version);
 });
 
 adminRouter.get("/admin/jobs", requireAdmin, async (req: Request, res: Response) => {

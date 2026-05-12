@@ -6,8 +6,11 @@ import { adminRouter } from "./admin.js";
 import { startWorker, stopWorker, recoverStaleClaims } from "./worker.js";
 import { setupContactCard } from "./services/contact-card.js";
 import { prisma } from "./db.js";
+import { version } from "./version.js";
 
 async function main() {
+  logger.info({ version }, "starting up");
+
   const recovered = await recoverStaleClaims();
   logger.info({ recovered }, "boot recovery complete");
 

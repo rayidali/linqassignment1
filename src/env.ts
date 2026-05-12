@@ -33,6 +33,11 @@ const EnvSchema = z.object({
   // Comma-separated handles (E.164 phones / emails) that are auto-opted-in
   // and exempt from the per-minute video rate limit. e.g. "+18647654848"
   ACCESS_ALLOWLIST: optionalString(),
+
+  // Injected automatically by Render at build/deploy time — surfaced by
+  // GET /version and the startup log so you can confirm which build is live.
+  RENDER_GIT_COMMIT: optionalString(),
+  RENDER_GIT_BRANCH: optionalString(),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
