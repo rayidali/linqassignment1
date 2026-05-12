@@ -117,11 +117,14 @@ function titleTrack(
   const fontSize = Math.max(18, Math.round(Math.min(outputW, outputH) * style.fontScale));
   const boxW = Math.round(outputW * 0.92);
   const boxH = Math.round(outputH * 0.5);
+  // Default font is Helvetica Bold. The mastermind matcher will later be able
+  // to override the font per overlay (or per vibe); for now this is the
+  // baseline for all templates.
   const css =
     `body{margin:0}` +
     `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-    `p{margin:0;max-width:100%;font-family:"Montserrat","Open Sans",Helvetica,Arial,sans-serif;` +
-    `font-weight:800;font-size:${fontSize}px;line-height:1.15;color:#ffffff;text-align:center;` +
+    `p{margin:0;max-width:100%;font-family:Helvetica,Arial,sans-serif;` +
+    `font-weight:bold;font-size:${fontSize}px;line-height:1.15;color:#ffffff;text-align:center;` +
     `text-shadow:0 3px 14px rgba(0,0,0,0.75);word-wrap:break-word;overflow-wrap:break-word;` +
     (style.uppercase ? `text-transform:uppercase;` : ``) +
     `}`;
