@@ -5,7 +5,7 @@ import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
 import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
 import { generateReply } from "./services/chat.js";
-import { buildEdit, STYLE_PRESETS } from "./templates/index.js";
+import { buildEdit, STYLE_PRESETS, PACE_TO_CLIP_SECONDS } from "./templates/index.js";
 import type { LinqWebhookPayload, EditPlan } from "./schemas.js";
 
 // Used when Jamendo can't resolve a track — there's always a soundtrack.
@@ -51,11 +51,38 @@ export type AdvanceResult = {
 };
 
 const POLL_INTERVAL_MS = 5000;
-// Shotstack's /stage sandbox occasionally wedges a render in "rendering"
-// forever. Measured from when we first submitted the render:
-const RENDER_SLOW_NOTICE_MS = 4 * 60_000; // text the user "still working on it"
-const RENDER_RESUBMIT_MS = 6 * 60_000; // silently resubmit a fresh render once
-const RENDER_GIVEUP_MS = 9 * 60_000; // give up, fail the job, tell the user it broke
+// Grace beyond the *estimated* render time before we (1) tell the user it's
+// running slow, (2) silently resubmit a fresh render once, (3) give up and
+// fail the job. So a genuinely big edit (long estimate) gets proportionally
+// more slack — the wait isn't a flat hardcoded number. Shotstack's /stage
+// sandbox occasionally wedges a render forever, which is what (3) catches.
+const RENDER_SLOW_NOTICE_GRACE_MS = 2 * 60_000;
+const RENDER_RESUBMIT_GRACE_MS = 4 * 60_000;
+const RENDER_GIVEUP_GRACE_MS = 9 * 60_000;
+// Bounds on the render estimate (a render of one of our short montages
+// shouldn't legitimately take more than a few minutes; never less than ~20s).
+const RENDER_ESTIMATE_MIN_MS = 20_000;
+const RENDER_ESTIMATE_MAX_MS = 5 * 60_000;
+
+// Rough estimate of how long Shotstack will take: queue/setup baseline plus a
+// few × the output duration (1080p renders run slower than realtime). Loose on
+// purpose — drives the "should be ~X" line to the user and scales the
+// slow/resubmit/giveup timers off it. Output duration = clips × per-clip
+// montage seconds; for a single clip we don't know its length here, so assume
+// a short clip.
+function estimateRenderMs(plan: EditPlan, clipCount: number): number {
+  const outputSeconds = clipCount > 1 ? clipCount * PACE_TO_CLIP_SECONDS[plan.pace] : 12;
+  const seconds = 20 + outputSeconds * 4;
+  return Math.round(Math.max(RENDER_ESTIMATE_MIN_MS, Math.min(RENDER_ESTIMATE_MAX_MS, seconds * 1000)));
+}
+
+function estimatePhrase(ms: number): string {
+  const s = ms / 1000;
+  if (s <= 45) return "should be quick, under a min";
+  if (s <= 90) return "should be about a min";
+  if (s <= 180) return "give it a couple mins";
+  return "this one's a bit bigger, give it a few mins";
+}
 
 type ClipDownload = {
   r2Key: string;
@@ -159,9 +186,9 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         };
       }
 
-      const estimate = clipCount > 1 ? "should be ~2 min" : "should be ~1 min";
-      await sendTextReply(chatId, `${plan.confirmation}, ${estimate}`, `${job.id}-confirm`);
-      return { nextState: "matched", resultPatch: { plan } };
+      const estimatedRenderMs = estimateRenderMs(plan, clipCount);
+      await sendTextReply(chatId, `${plan.confirmation}, ${estimatePhrase(estimatedRenderMs)}`, `${job.id}-confirm`);
+      return { nextState: "matched", resultPatch: { plan, estimatedRenderMs } };
     }
 
     case "matched": {
@@ -216,15 +243,23 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       // entered `submitted` before renderSubmittedAt was tracked.
       const submittedAt = (result.renderSubmittedAt as number | undefined) ?? job.createdAt.getTime();
       const ageMs = now - submittedAt;
+      // Wait windows scale off the per-edit render estimate, not flat numbers.
+      const estMs = Math.max(
+        RENDER_ESTIMATE_MIN_MS,
+        Math.min(RENDER_ESTIMATE_MAX_MS, (result.estimatedRenderMs as number | undefined) ?? 60_000),
+      );
+      const giveUpMs = estMs + RENDER_GIVEUP_GRACE_MS;
+      const resubmitMs = estMs + RENDER_RESUBMIT_GRACE_MS;
+      const slowNoticeMs = estMs + RENDER_SLOW_NOTICE_GRACE_MS;
 
       // Give up on a wedged render so the user gets a definitive answer.
-      if (ageMs > RENDER_GIVEUP_MS) {
-        return { nextState: "failed", error: `render exceeded ${Math.round(RENDER_GIVEUP_MS / 60_000)}min, gave up` };
+      if (ageMs > giveUpMs) {
+        return { nextState: "failed", error: `render exceeded ~${Math.round(giveUpMs / 60_000)}min, gave up` };
       }
 
       // One silent resubmit — the sandbox sometimes drops a render but a fresh
       // submit goes straight through. Everything we need is still in `result`.
-      if (ageMs > RENDER_RESUBMIT_MS && !result.renderResubmitted) {
+      if (ageMs > resubmitMs && !result.renderResubmitted) {
         const plan = result.plan as EditPlan | undefined;
         const clips = (result.clips as ClipDownload[] | undefined) ?? [];
         const clipUrls = clips
@@ -244,11 +279,11 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         // Can't resubmit (missing data) — fall through and keep polling the original.
       }
 
-      // Heads-up to the user once if it's dragging.
-      if (ageMs > RENDER_SLOW_NOTICE_MS && !result.slowNoticeSent) {
+      // Heads-up to the user once if it's running over the estimate.
+      if (ageMs > slowNoticeMs && !result.slowNoticeSent) {
         await sendTextReply(
           chatId,
-          "shotstack's being a lil slow today, still working on ur edit, hang tight",
+          "k this one's taking a bit longer than i thought, still working on ur edit, hang tight",
           `${job.id}-slow`,
         ).catch(() => {});
         return { nextState: "submitted", resultPatch: { slowNoticeSent: true, nextPollAt: now + POLL_INTERVAL_MS } };

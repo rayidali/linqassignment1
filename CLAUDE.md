@@ -76,10 +76,10 @@ State names are **past-tense** — each describes what's been completed.
 |---|---|---|
 | `received` | filter media parts to video/image (fail "no editable…" otherwise), normalize each **sequentially** with ffmpeg (autorotate + H.264 + cap long side at 1920px) — parallel transcodes thrash the single CPU core and OOM — upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
 | `downloaded` | `planEdit`. If it needs clarification (and we haven't asked yet): send the question | `awaiting_clarification` |
-| `downloaded` | else: send the confirmation + a rough time estimate | `matched` |
+| `downloaded` | else: send the confirmation + a render-time estimate derived from the plan (`estimateRenderMs` — baseline + ~4× the output duration, where output ≈ clips × per-clip montage seconds); store it as `estimatedRenderMs` | `matched` |
 | `awaiting_clarification` | (worker doesn't touch it — parked until the user's text reply, which the webhook routes back here as `result.clarificationAnswer` + state `downloaded`) | — |
 | `matched` | resolve the music query via Jamendo (`resolveMusicUrl`, fallback to a Shotstack-CDN track), `buildEdit(plan, …)`, submit render | `submitted` |
-| `submitted` | poll render status; self-loop (5s) until `done`. If the render drags: text the user "still working on it" at ~4 min, silently resubmit a fresh render once at ~6 min, give up → `failed` at ~9 min (Shotstack's sandbox occasionally wedges a render forever) | `rendered` |
+| `submitted` | poll render status; self-loop (5s) until `done`. If the render runs past `estimatedRenderMs` + a grace: text the user "taking longer than i thought" (+2 min), silently resubmit a fresh render once (+4 min), give up → `failed` (+9 min) — so a big edit gets proportionally more slack (Shotstack's sandbox occasionally wedges a render forever) | `rendered` |
 | `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
 | `uploaded` | send video reply via Linq with a "here's ur {style} edit" caption | `delivered` |
 
