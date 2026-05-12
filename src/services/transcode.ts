@@ -1,0 +1,124 @@
+import { spawn } from "node:child_process";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import ffmpegStatic from "ffmpeg-static";
+import { logger } from "../logger.js";
+
+// ffmpeg-static's CJS default export resolves to the binary path at runtime
+// under esModuleInterop; the .d.ts/CJS interop confuses tsc's type, so cast.
+const FFMPEG_PATH = ffmpegStatic as unknown as string | null;
+const TRANSCODE_TIMEOUT_MS = 180_000;
+const MAX_INPUT_BYTES = 80 * 1024 * 1024;
+
+export type NormalizedVideo = {
+  buffer: Buffer;
+  width: number;
+  height: number;
+};
+
+// Downloads a video from a URL into a temp file, then runs ffmpeg to:
+//  - apply rotation metadata (autorotate is ON by default — fixes iPhone
+//    portrait videos that store a landscape frame + a "rotate 90°" matrix
+//    that Shotstack does NOT apply)
+//  - transcode to H.264 / yuv420p (universal compatibility, drops HEVC)
+//  - cap the long side at 1280px (keeps render fast and files small)
+//  - faststart (moov atom at the front, for streaming playback)
+// Returns the normalized MP4 bytes plus its true display dimensions.
+export async function fetchAndNormalize(
+  jobId: string,
+  sourceUrl: string,
+): Promise<NormalizedVideo> {
+  if (!FFMPEG_PATH) {
+    throw new Error("ffmpeg-static binary not available");
+  }
+  const dir = await mkdtemp(join(tmpdir(), `vid-${jobId.slice(0, 8)}-`));
+  const inPath = join(dir, "in");
+  const outPath = join(dir, "out.mp4");
+  try {
+    const res = await fetch(sourceUrl);
+    if (!res.ok || !res.body) {
+      throw new Error(`fetch source failed: ${res.status} ${res.statusText}`);
+    }
+    const lenHeader = res.headers.get("content-length");
+    if (lenHeader && Number(lenHeader) > MAX_INPUT_BYTES) {
+      throw new Error(`source too large: ${lenHeader} bytes (max ${MAX_INPUT_BYTES})`);
+    }
+    await pipeline(
+      Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]),
+      createWriteStream(inPath),
+    );
+    logger.info({ jobId, sourceUrl }, "source downloaded, transcoding with ffmpeg");
+
+    const args = [
+      "-y",
+      "-i", inPath,
+      // First scale: fit within a 1280x1280 box, preserving aspect, only
+      // shrinking (decrease). Second: round to even dims (H.264 requires it).
+      "-vf", "scale=1280:1280:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "25", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      outPath,
+    ];
+    const stderr = await runFfmpeg(FFMPEG_PATH, args);
+    const dims = parseOutputDims(stderr);
+    if (!dims) {
+      throw new Error(`could not parse output dimensions from ffmpeg stderr: ${stderr.slice(-1000)}`);
+    }
+
+    const buffer = await readFileToBuffer(outPath);
+    logger.info(
+      { jobId, width: dims.width, height: dims.height, bytes: buffer.length },
+      "transcode complete",
+    );
+    return { buffer, width: dims.width, height: dims.height };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+function runFfmpeg(ffmpegPath: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    proc.stderr.on("data", (d: Buffer) => {
+      stderr += d.toString();
+      if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
+    });
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error("ffmpeg timed out"));
+    }, TRANSCODE_TIMEOUT_MS);
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(stderr);
+      else reject(new Error(`ffmpeg exited ${code}: ${stderr.slice(-2000)}`));
+    });
+  });
+}
+
+// Pull the OUTPUT video stream's WxH from ffmpeg's stderr (the section after
+// "Output #0", line "... Video: ... 1280x720 ...").
+function parseOutputDims(stderr: string): { width: number; height: number } | null {
+  const outIdx = stderr.lastIndexOf("Output #0");
+  const section = outIdx >= 0 ? stderr.slice(outIdx) : stderr;
+  const m = section.match(/Video:[^\n]*?\b(\d{2,5})x(\d{2,5})\b/);
+  if (!m) return null;
+  return { width: Number(m[1]), height: Number(m[2]) };
+}
+
+async function readFileToBuffer(path: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of createReadStream(path)) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}

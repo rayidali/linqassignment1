@@ -1,15 +1,11 @@
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 
-// Sandbox env. Switch to "v1" / production for the edit API and "v1" for ingest.
+// Sandbox env. Switch to "v1" for production.
 const SHOTSTACK_ENV = "stage";
 
 function shotstackUrl(path: string): string {
   return `https://api.shotstack.io/${SHOTSTACK_ENV}/${path}`;
-}
-
-function ingestUrl(path: string): string {
-  return `https://api.shotstack.io/ingest/${SHOTSTACK_ENV}/${path}`;
 }
 
 function authHeaders(): Record<string, string> {
@@ -42,154 +38,6 @@ export async function submitRender(jobId: string, edit: unknown): Promise<string
   }
   logger.info({ jobId, renderId: data.response.id }, "Shotstack render queued");
   return data.response.id;
-}
-
-export type MediaDimensions = { width: number; height: number };
-
-function makeEven(n: number): number {
-  const r = Math.round(n);
-  return r % 2 === 0 ? r : r + 1;
-}
-
-// Scale so the longer side is at most maxLong, keep aspect, round to even
-// (Shotstack's encoder requires even dimensions).
-function clampDimensions(
-  width: number,
-  height: number,
-  maxLong = 1280,
-): MediaDimensions {
-  const longSide = Math.max(width, height);
-  const scale = longSide > maxLong ? maxLong / longSide : 1;
-  return {
-    width: Math.max(2, makeEven(width * scale)),
-    height: Math.max(2, makeEven(height * scale)),
-  };
-}
-
-// Probe a media URL via Shotstack's hosted FFprobe. Returns the *display*
-// dimensions (accounts for rotation metadata — phones often store a
-// landscape frame with a 90° rotation tag so it displays portrait).
-// Returns null on any failure — caller should fall back to a default.
-export async function probeMedia(jobId: string, url: string): Promise<MediaDimensions | null> {
-  try {
-    const res = await fetch(shotstackUrl(`probe/${encodeURIComponent(url)}`), {
-      headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
-    });
-    if (!res.ok) {
-      logger.warn({ jobId, url, status: res.status }, "probe request failed");
-      return null;
-    }
-    const data = (await res.json().catch(() => null)) as
-      | {
-          response?: {
-            metadata?: {
-              streams?: Array<{
-                codec_type?: string;
-                width?: number;
-                height?: number;
-                tags?: { rotate?: string };
-                side_data_list?: Array<{ rotation?: number }>;
-              }>;
-            };
-          };
-        }
-      | null;
-
-    const streams = data?.response?.metadata?.streams ?? [];
-    const video = streams.find((s) => s.codec_type === "video");
-    if (!video || !video.width || !video.height) {
-      logger.warn({ jobId, url }, "probe returned no usable video stream");
-      return null;
-    }
-
-    let { width, height } = video;
-    const rotateTag = video.tags?.rotate ? Number(video.tags.rotate) : 0;
-    const rotateSide = video.side_data_list?.find((s) => typeof s.rotation === "number")?.rotation ?? 0;
-    const rotation = ((rotateTag || rotateSide) % 360 + 360) % 360;
-    if (rotation === 90 || rotation === 270) {
-      [width, height] = [height, width];
-    }
-
-    const dims = clampDimensions(width, height);
-    logger.info({ jobId, url, raw: { w: video.width, h: video.height }, rotation, dims }, "probed media dimensions");
-    return dims;
-  } catch (err) {
-    logger.warn({ jobId, url, err: err instanceof Error ? err.message : String(err) }, "probe threw");
-    return null;
-  }
-}
-
-// --- Ingest API ---
-// Transcodes a source URL into a normalized Shotstack-hosted MP4. This bakes
-// in rotation metadata (iPhone portrait videos store landscape frames + a
-// rotate flag that the edit API does NOT auto-apply) and gives reliable
-// display dimensions.
-
-export async function ingestSource(jobId: string, sourceUrl: string): Promise<string> {
-  logger.info({ jobId, sourceUrl }, "submitting source to Shotstack Ingest");
-  const res = await fetch(ingestUrl("sources"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.SHOTSTACK_API_KEY ?? "",
-    },
-    body: JSON.stringify({ url: sourceUrl }),
-  });
-  const data = (await res.json().catch(() => null)) as
-    | { data?: { id?: string } }
-    | null;
-  if (!res.ok || !data?.data?.id) {
-    throw new Error(`Shotstack ingest submit failed: ${res.status} ${JSON.stringify(data)}`);
-  }
-  logger.info({ jobId, sourceId: data.data.id }, "Shotstack ingest queued");
-  return data.data.id;
-}
-
-export type IngestStatus =
-  | { status: "queued" | "importing" }
-  | { status: "ready"; url: string; width: number; height: number; duration?: number }
-  | { status: "failed" | "deleted"; error?: string };
-
-export async function getIngestStatus(jobId: string, sourceId: string): Promise<IngestStatus> {
-  const res = await fetch(ingestUrl(`sources/${sourceId}`), {
-    headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
-  });
-  const data = (await res.json().catch(() => null)) as
-    | {
-        data?: {
-          attributes?: {
-            status?: string;
-            source?: string;
-            width?: number;
-            height?: number;
-            duration?: number;
-            error?: string;
-          };
-        };
-      }
-    | null;
-  const attrs = data?.data?.attributes;
-  if (!res.ok || !attrs?.status) {
-    throw new Error(`Shotstack ingest status failed: ${res.status} ${JSON.stringify(data)}`);
-  }
-  const status = attrs.status;
-  logger.info({ jobId, sourceId, ingestStatus: status }, "polled Shotstack ingest");
-  if (status === "ready") {
-    if (!attrs.source || !attrs.width || !attrs.height) {
-      throw new Error(`Shotstack ingest ready but missing source/dims: ${JSON.stringify(attrs)}`);
-    }
-    return {
-      status: "ready",
-      url: attrs.source,
-      width: attrs.width,
-      height: attrs.height,
-      duration: attrs.duration,
-    };
-  }
-  if (status === "failed" || status === "deleted") {
-    return { status, error: attrs.error };
-  }
-  return { status: status as "queued" | "importing" };
 }
 
 export type ShotstackStatus =

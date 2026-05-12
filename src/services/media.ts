@@ -1,59 +1,47 @@
-import { Readable } from "node:stream";
 import { Upload } from "@aws-sdk/lib-storage";
 import { logger } from "../logger.js";
 import { getR2Client, getR2Bucket, r2PublicUrl } from "../r2.js";
+import { fetchAndNormalize } from "./transcode.js";
 
 export type DownloadResult = {
   key: string;
   size: number;
   contentType: string;
   publicUrl: string | null;
+  width: number;
+  height: number;
 };
 
-// Downloads from a URL (e.g., Linq's presigned media URL) and streams the
-// bytes into R2. Returns the R2 key + the public URL if R2_PUBLIC_BASE_URL
-// is set (we need a public URL later to hand to Shotstack as a render input).
+// Fetches the user's media from Linq's presigned URL, normalizes it with
+// ffmpeg (autorotate, transcode to H.264, cap at 1280px), and uploads the
+// clean MP4 to R2. Returns the R2 key + true display dimensions.
 export async function downloadMedia(
   jobId: string,
   url: string,
   filename: string,
 ): Promise<DownloadResult> {
-  logger.info({ jobId, url, filename }, "downloading media to R2");
+  logger.info({ jobId, url, filename }, "downloading + normalizing media");
+  const { buffer, width, height } = await fetchAndNormalize(jobId, url);
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(
-      `media download failed: ${response.status} ${response.statusText}`,
-    );
-  }
-  if (!response.body) {
-    throw new Error("media download response has no body");
-  }
-
-  const contentType =
-    response.headers.get("content-type") ?? "application/octet-stream";
-  const sizeHeader = response.headers.get("content-length");
-  const size = sizeHeader ? Number(sizeHeader) : 0;
-
-  const safeFilename = filename.replace(/[^a-zA-Z0-9._-]/g, "_") || "media";
-  const key = `inbound/${jobId}/${safeFilename}`;
-
-  const body = Readable.fromWeb(
-    response.body as Parameters<typeof Readable.fromWeb>[0],
-  );
+  const base =
+    filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_") || "media";
+  const key = `inbound/${jobId}/${base}.mp4`;
 
   const upload = new Upload({
     client: getR2Client(),
     params: {
       Bucket: getR2Bucket(),
       Key: key,
-      Body: body,
-      ContentType: contentType,
+      Body: buffer,
+      ContentType: "video/mp4",
     },
   });
   await upload.done();
 
   const publicUrl = r2PublicUrl(key);
-  logger.info({ jobId, key, size, contentType, publicUrl }, "media uploaded to R2");
-  return { key, size, contentType, publicUrl };
+  logger.info(
+    { jobId, key, size: buffer.length, width, height, publicUrl },
+    "normalized media uploaded to R2",
+  );
+  return { key, size: buffer.length, contentType: "video/mp4", publicUrl, width, height };
 }

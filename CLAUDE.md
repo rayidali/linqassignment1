@@ -39,24 +39,22 @@ Relative imports must end in `.js` (ESM/NodeNext rule), even though source files
 
 State names are **past-tense** — each describes what's been completed.
 
-Order: `received → downloaded → ingesting → ingested → matched → submitted → rendered → uploaded → delivered`
+Order: `received → downloaded → matched → submitted → rendered → uploaded → delivered`
 
 | State | What advance() does | Next |
 |---|---|---|
-| `received` | download all media parts → R2 (parallel) | `downloaded` |
-| `downloaded` | submit all R2 clips to Shotstack Ingest | `ingesting` |
-| `ingesting` | poll ingest status; self-loop until all `ready` | `ingested` |
-| `ingested` | match template via Anthropic | `matched` |
-| `matched` | build Shotstack edit (using ingested URLs + first clip's dims for output size), submit render | `submitted` |
-| `submitted` | poll render status; self-loop until `done` | `rendered` |
+| `received` | download all media parts, normalize each with ffmpeg (autorotate + H.264 + cap 1280px), upload to R2; store first clip's normalized dims as `outputSize` | `downloaded` |
+| `downloaded` | match template via Anthropic | `matched` |
+| `matched` | build Shotstack edit (R2 clip URLs, output sized to `outputSize`), submit render | `submitted` |
+| `submitted` | poll render status; self-loop (5s) until `done` | `rendered` |
 | `rendered` | fetch render output, pre-upload to Linq Attachments | `uploaded` |
 | `uploaded` | send video reply via Linq | `delivered` |
 
 Terminal states: `delivered` (success), `failed` (error path, `error` populated).
 
-Self-loop / throttled-poll states: `ingesting` and `submitted` — they re-claim each tick but only hit the external API every 5s (gated by `result.nextPollAt`).
+Self-loop / throttled-poll state: `submitted` — re-claims each tick but only polls Shotstack every 5s (gated by `result.nextPollAt`).
 
-**Why `ingesting` exists:** Shotstack's edit API does NOT auto-apply rotation metadata (iPhone portrait videos store landscape frames + a rotate flag). The Ingest API transcodes the raw upload, bakes in the rotation, normalizes encoding, and returns reliable display dimensions which we use to size the output (so the render matches the source orientation).
+**Rotation/orientation handling:** Shotstack (neither Ingest nor the render engine) applies the rotation metadata that iPhone portrait videos carry (they store a landscape frame + a `rotate 90°` display matrix). So in `received` we run every clip through ffmpeg (`ffmpeg-static`), which `-autorotate`s (default on) — baking the rotation into the pixels, setting `rotate=0`, transcoding HEVC→H.264, capping the long side at 1280px. The normalized output's dimensions are the true display dims; the first clip's dims size the render output. So output orientation always matches the (first) source video. See `src/services/transcode.ts`.
 
 `advance(job)` is in `src/state.ts`. Pure async: takes the job, runs the side effect for the current state, returns next state + a result patch (shallow-merged into `job.result`).
 
