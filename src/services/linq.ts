@@ -160,13 +160,10 @@ export async function startTyping(chatId: string): Promise<void> {
 // into a chat — an Apple-native "Add to Contacts" card so the user can save us
 // with a name instead of a bare phone number.
 export async function shareContactCard(chatId: string): Promise<void> {
+  // No body — the share endpoint just shares the number's configured card.
   const res = await fetchWithTimeout(`${LINQ_BASE}/chats/${chatId}/share_contact_card`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: bearer(),
-    },
-    body: JSON.stringify(env.LINQ_NUMBER ? { phone_number: env.LINQ_NUMBER } : {}),
+    headers: { Authorization: bearer() },
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");

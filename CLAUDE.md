@@ -23,7 +23,7 @@ src/
   logger.ts       # pino instance — ALWAYS import this, never console.log
   index.ts        # entrypoint: wires Express + worker + recovery sweep
   webhook.ts      # POST /webhook — verify HMAC, validate, insert Job, 200 fast
-  admin.ts        # GET /admin/jobs (gated by ADMIN_SECRET), GET /healthz
+  admin.ts        # GET /healthz, GET /version, GET /admin/jobs[/:id] + GET /admin/contact-card (gated by ADMIN_SECRET)
   state.ts        # advance(job) — pure decision logic, no I/O
   worker.ts       # setInterval loop: claim → advance → persist
   recovery.ts     # boot-time sweep of stale claims

@@ -87,3 +87,16 @@ export async function setupContactCard(): Promise<void> {
     );
   }
 }
+
+// Fetches the current contact card Linq has on file for our number — for
+// debugging ("is it actually set to iEdit? is it active?"). Surfaced via
+// GET /admin/contact-card.
+export async function getContactCard(): Promise<unknown> {
+  if (!env.LINQ_NUMBER || !env.LINQ_API_KEY) {
+    return { error: "LINQ_NUMBER or LINQ_API_KEY not set" };
+  }
+  const url = `${LINQ_BASE}/contact_card?phone_number=${encodeURIComponent(env.LINQ_NUMBER)}`;
+  const res = await fetchWithTimeout(url, { headers: { Authorization: bearer() } });
+  const body = await res.json().catch(() => null);
+  return { status: res.status, body, configuredName: [CARD_FIRST_NAME, CARD_LAST_NAME].filter(Boolean).join(" ") };
+}
