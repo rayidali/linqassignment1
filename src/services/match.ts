@@ -25,10 +25,11 @@ function getClient(): Anthropic {
   return _client;
 }
 
-const SYSTEM = `You are a video editing assistant for a TikTok-style video editor. The user texted a short video clip with an optional caption. Pick the template whose description best matches the mood of the caption, then pick a music track from that template's music_options and write text overlays.
+const SYSTEM = `You are a video editing assistant for a TikTok-style video editor. The user texted a short video clip (or photo) with an optional caption. Pick the template whose description best matches the mood of the caption, pick a music track from that template's music_options, decide if the user requested specific music, and write text overlays.
 
 Rules:
-- The music_id MUST come from the chosen template's music_options. Never mix.
+- music_id MUST come from the chosen template's music_options. Never mix.
+- requested_music_query: if the user explicitly asks for music (a specific song, artist, genre, or vibe like "upbeat", "lofi", "sad piano", "use Hot in Herre by Nelly"), put a SHORT search query here that captures the genre/mood — we only have royalty-free music, so famous songs aren't available; distill "use Hot in Herre by Nelly" to e.g. "upbeat 2000s hip hop instrumental". Add "instrumental" if it fits. If the user does NOT mention music at all, set requested_music_query to null and the template's default track is used.
 - Write text overlays the user would actually want on screen. Each overlay <= 6 words, punchy. Match the count to the chosen template's text_slot_count.
 - timestamp is seconds from video start; first overlay at 0.
 - clip_order is just ["clip_1"] (single user clip for now).
@@ -39,6 +40,7 @@ Rules:
 const MatchSchema = z.object({
   template_id: z.enum(ALL_TEMPLATE_IDS as [string, ...string[]]),
   music_id: z.enum(ALL_MUSIC_IDS as [string, ...string[]]),
+  requested_music_query: z.string().nullable(),
   clip_order: z.array(z.string()),
   text_overlays: z.array(
     z.object({
@@ -58,7 +60,7 @@ export async function matchTemplate(
   const templatesContext = TEMPLATES.map((t) => ({
     id: t.id,
     description: t.description,
-    music_options: t.music_options,
+    music_options: t.music_options.map((m) => ({ id: m.id, description: m.description })),
     text_slot_count: t.text_slot_count,
   }));
 
@@ -105,6 +107,7 @@ ${JSON.stringify(templatesContext, null, 2)}`;
     {
       template: choice.template_id,
       music: choice.music_id,
+      requestedMusic: choice.requested_music_query,
       overlayCount: choice.text_overlays.length,
     },
     "template matched",

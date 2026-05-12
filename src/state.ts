@@ -2,10 +2,15 @@ import { logger } from "./logger.js";
 import { downloadMedia } from "./services/media.js";
 import { matchTemplate } from "./services/match.js";
 import { submitRender, pollRender } from "./services/shotstack.js";
+import { resolveMusicUrl } from "./services/music.js";
 import { uploadAttachment, sendVideoReply, sendTextReply } from "./services/linq.js";
 import { generateReply } from "./services/chat.js";
 import { getTemplate } from "./templates/index.js";
 import type { LinqWebhookPayload, TemplateChoice } from "./schemas.js";
+
+// Used when Jamendo can't resolve a track — there's always a soundtrack.
+const FALLBACK_MUSIC_URL =
+  "https://shotstack-assets.s3-ap-southeast-2.amazonaws.com/music/unminus/lit.mp3";
 
 export const STATES = [
   // video pipeline
@@ -138,13 +143,31 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       }
       const outputSize =
         (result.outputSize as { width: number; height: number } | undefined) ?? undefined;
+
+      // Resolve music: user-requested query if any, else the chosen template's
+      // default track. Always end up with *some* soundtrack (fallback URL).
+      const reqQuery = choice.requested_music_query?.trim() || null;
+      const musicQuery =
+        reqQuery ?? tpl.music_options.find((m) => m.id === choice.music_id)?.jamendoQuery ?? null;
+      const resolvedMusic = musicQuery ? await resolveMusicUrl(job.id, musicQuery) : null;
+      const musicUrl = resolvedMusic ?? FALLBACK_MUSIC_URL;
+
       log.info(
-        { clipCount: clipUrls.length, template: choice.template_id, outputSize },
+        {
+          clipCount: clipUrls.length,
+          template: choice.template_id,
+          outputSize,
+          musicQuery,
+          musicResolved: Boolean(resolvedMusic),
+        },
         "building Shotstack edit",
       );
-      const edit = tpl.buildEdit(clipUrls, choice, outputSize);
+      const edit = tpl.buildEdit(clipUrls, choice, outputSize, musicUrl);
       const renderId = await submitRender(job.id, edit);
-      return { nextState: "submitted", resultPatch: { renderId, nextPollAt: 0 } };
+      return {
+        nextState: "submitted",
+        resultPatch: { renderId, nextPollAt: 0, musicUrl, musicQuery },
+      };
     }
 
     case "submitted": {

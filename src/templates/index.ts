@@ -4,13 +4,16 @@ import type { TemplateChoice } from "../schemas.js";
 // Add/edit freely — the matcher reads `description` for each template, so
 // description quality directly drives match quality.
 //
-// Each template's buildEdit() returns Shotstack edit JSON. The function
-// accepts an ARRAY of clip URLs so multi-clip stitching works by construction
-// (slice 4 will pass [url1, url2, …] when the iMessage has multiple media).
+// Each template's buildEdit() returns Shotstack edit JSON. It accepts an
+// ARRAY of clip URLs (multi-clip stitching), an optional output size (the
+// first clip's normalized dims, so the render matches the source
+// orientation), and an optional music URL (a royalty-free track to lay over
+// the clips; when present the source clips are muted).
 
 export type MusicOption = {
   id: string;
-  description: string;
+  description: string; // what the matcher reasons over to pick a track
+  jamendoQuery: string; // free-text query → an actual track via Jamendo (see services/music.ts)
 };
 
 // Loose Shotstack edit type. Shotstack's API accepts much more; we only
@@ -49,9 +52,12 @@ export type Template = {
   description: string;
   music_options: MusicOption[];
   text_slot_count: number;
-  // outputSize: if provided (the first clip's normalized dims), the render
-  // matches the source video's orientation. If absent, defaults to 9:16.
-  buildEdit: (clips: string[], choice: TemplateChoice, outputSize?: OutputSize) => ShotstackEdit;
+  buildEdit: (
+    clips: string[],
+    choice: TemplateChoice,
+    outputSize?: OutputSize,
+    musicUrl?: string,
+  ) => ShotstackEdit;
 };
 
 // Per-template clip duration when stitching multiple clips. Single clip uses
@@ -65,12 +71,14 @@ const FUNNY_CLIP_S = 2.5;
 function videoTrack(
   clips: string[],
   perClipS: number,
+  mute: boolean,
   transition?: { in?: string; out?: string },
 ): ShotstackEdit["timeline"]["tracks"][number] {
   const single = clips.length === 1;
   return {
     clips: clips.map((url, i) => ({
-      asset: { type: "video", src: url },
+      // Mute the source when there's a music track over it.
+      asset: mute ? { type: "video", src: url, volume: 0 } : { type: "video", src: url },
       // Single clip: play it in full ("auto" = source's natural length).
       // Multi-clip: trim each to perClipS and sequence them — that's the
       // montage behavior, and Shotstack needs explicit starts to stitch.
@@ -124,6 +132,7 @@ function commonBuildEdit(
   titleStyle: string,
   titleSize: string,
   outputSize?: OutputSize,
+  musicUrl?: string,
   // Omit for a hard cut between clips (the default). Pass e.g.
   // { in: "fade", out: "fade" } to opt this template into transitions.
   transition?: { in?: string; out?: string },
@@ -132,10 +141,11 @@ function commonBuildEdit(
   if (choice.text_overlays.length > 0) {
     tracks.push(titleTrack(choice.text_overlays, titleStyle, titleSize));
   }
-  tracks.push(videoTrack(clips, perClipS, transition));
+  tracks.push(videoTrack(clips, perClipS, Boolean(musicUrl), transition));
   return {
     timeline: {
       background: "#000000",
+      ...(musicUrl ? { soundtrack: { src: musicUrl, effect: "fadeOut" } } : {}),
       tracks,
     },
     output: baseOutput(outputSize),
@@ -148,48 +158,80 @@ export const TEMPLATES: Template[] = [
     description:
       "High-energy montage with fast cuts on the beat, punchy zoom transitions, and bold all-caps text overlays. Pick when the user wants something exciting, hype, intense, action-packed, or 'goes hard' — sports highlights, party clips, gym, workout, dance.",
     music_options: [
-      { id: "music_trap_drums", description: "Hard-hitting trap drums with deep 808 bass" },
-      { id: "music_edm_drop", description: "EDM build-up with a massive drop" },
+      {
+        id: "music_trap_drums",
+        description: "Hard-hitting trap drums with deep 808 bass",
+        jamendoQuery: "hard trap beat 808 bass instrumental",
+      },
+      {
+        id: "music_edm_drop",
+        description: "EDM build-up with a massive drop",
+        jamendoQuery: "epic edm electronic drop instrumental",
+      },
     ],
     text_slot_count: 2,
-    buildEdit: (clips, choice, outputSize) =>
-      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large", outputSize),
+    buildEdit: (clips, choice, outputSize, musicUrl) =>
+      commonBuildEdit(clips, choice, HYPE_CLIP_S, "blockbuster", "large", outputSize, musicUrl),
   },
   {
     id: "tmpl_sad_emotional",
     description:
       "Slow, emotional, melancholy edit. Long held shots, soft cross-fade transitions, simple serif text overlay. Pick when the user wants something sad, nostalgic, reflective, missing-someone, heartbreak, anime-style sad edit, or 'in my feelings'.",
     music_options: [
-      { id: "music_piano_sad", description: "Soft piano in a minor key" },
-      { id: "music_lofi_rain", description: "Lofi beat with rain ambience" },
+      {
+        id: "music_piano_sad",
+        description: "Soft piano in a minor key",
+        jamendoQuery: "sad emotional piano instrumental melancholic",
+      },
+      {
+        id: "music_lofi_rain",
+        description: "Lofi beat with rain ambience",
+        jamendoQuery: "lofi sad chill rainy ambient instrumental",
+      },
     ],
     text_slot_count: 1,
-    buildEdit: (clips, choice, outputSize) =>
-      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium", outputSize),
+    buildEdit: (clips, choice, outputSize, musicUrl) =>
+      commonBuildEdit(clips, choice, SAD_CLIP_S, "minimal", "medium", outputSize, musicUrl),
   },
   {
     id: "tmpl_aesthetic_chill",
     description:
       "Aesthetic chill vibes. Slow-mo, warm color grade, minimal handwritten-style overlays. Pick when the user wants something dreamy, soft, cozy, vibey, lifestyle, travel, sunset, coffee, golden hour, scenic.",
     music_options: [
-      { id: "music_lofi_chill", description: "Mellow lofi beat" },
-      { id: "music_synthwave", description: "Dreamy synthwave instrumental" },
+      {
+        id: "music_lofi_chill",
+        description: "Mellow lofi beat",
+        jamendoQuery: "mellow lofi chill beats instrumental",
+      },
+      {
+        id: "music_synthwave",
+        description: "Dreamy synthwave instrumental",
+        jamendoQuery: "dreamy synthwave retro chill instrumental",
+      },
     ],
     text_slot_count: 1,
-    buildEdit: (clips, choice, outputSize) =>
-      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small", outputSize),
+    buildEdit: (clips, choice, outputSize, musicUrl) =>
+      commonBuildEdit(clips, choice, CHILL_CLIP_S, "future", "small", outputSize, musicUrl),
   },
   {
     id: "tmpl_funny_meme",
     description:
       "Quick comedic edit with meme-style impact frames, freeze-frames, and bold caption text with arrows or emoji. Pick when the user wants something funny, meme, prank, absurd, comedic, 'this is so me', or relatable humor.",
     music_options: [
-      { id: "music_meme_horn", description: "Classic meme airhorn / sad trombone" },
-      { id: "music_funky_bass", description: "Funky bassline groove" },
+      {
+        id: "music_meme_horn",
+        description: "Classic meme airhorn / sad trombone",
+        jamendoQuery: "funny goofy comedy quirky instrumental",
+      },
+      {
+        id: "music_funky_bass",
+        description: "Funky bassline groove",
+        jamendoQuery: "funky groovy upbeat bass instrumental",
+      },
     ],
     text_slot_count: 2,
-    buildEdit: (clips, choice, outputSize) =>
-      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium", outputSize),
+    buildEdit: (clips, choice, outputSize, musicUrl) =>
+      commonBuildEdit(clips, choice, FUNNY_CLIP_S, "vogue", "medium", outputSize, musicUrl),
   },
 ];
 

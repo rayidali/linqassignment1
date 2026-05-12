@@ -77,6 +77,8 @@ Self-loop / throttled-poll state: `submitted` — re-claims each tick but only p
 
 Either way the result is a uniform video clip. The first clip's normalized dimensions size the render output, so output orientation always matches the (first) source — portrait→portrait, landscape→landscape, image or video.
 
+**Music (`src/services/music.ts`):** every render gets a soundtrack and the source clips are muted. Each template's `music_options` carry a `jamendoQuery` (a genre/mood search string). The matcher also returns `requested_music_query` — if the user asked for specific music (a song/artist/genre/vibe), the LLM distills it to a search query (famous songs aren't available; "use Hot in Herre by Nelly" → "upbeat 2000s hip hop instrumental"); otherwise null. `resolveMusicUrl(query)` searches Jamendo (royalty-free, `JAMENDO_CLIENT_ID`), downloads the top instrumental match, re-hosts it on R2 (`music/jamendo-<id>.mp3` — Jamendo's audio URLs carry an expiring token, so we don't link them directly), and caches the R2 URL by query. If Jamendo fails, falls back to a hardcoded Shotstack-CDN track so there's always music. Jamendo's free tier is non-commercial — fine for the demo; would need a paid tier for commercial use.
+
 `advance(job)` is in `src/state.ts`. Pure async: takes the job, runs the side effect for the current state, returns next state + a result patch (shallow-merged into `job.result`).
 
 ## Hard rules

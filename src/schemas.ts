@@ -38,6 +38,10 @@ export type LinqWebhookPayload = z.infer<typeof LinqWebhookPayload>;
 export const TemplateChoice = z.object({
   template_id: z.string(),
   music_id: z.string(),
+  // A short genre/mood search query if the user asked for specific music
+  // (famous songs aren't available — distilled to a vibe), else null →
+  // the chosen template's default track is used.
+  requested_music_query: z.string().nullable(),
   clip_order: z.array(z.string()),
   text_overlays: z.array(
     z.object({
