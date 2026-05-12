@@ -12,9 +12,25 @@ const OPT_IN_WORDS = new Set([
 ]);
 
 const MSG = {
-  optInPrompt: "yo this is an AI video editor demo. reply OK and i'll start editing ur clips",
+  optInPrompt:
+    `yo this is an AI video editor demo. u send video clips or pics + a caption like "hype gym edit" ` +
+    `and i text back a short edited video with music, text, transitions, the works. reply OK to start`,
   welcome:
-    "u good. send me a video or pic + a caption of the vibe u want (hype, sad, chill, funny, whatever) and i'll edit it",
+    `u good. quick rundown so u know what im about:\n\n` +
+    `im an AI video editor. send me video clips and or photos (1 or more, any mix) with a caption of the vibe u want, ` +
+    `and i text u back a finished short edit with music, text overlays, color, transitions, all of it.\n\n` +
+    `captions that work great:\n` +
+    `hype gym edit with big bold text\n` +
+    `chill summer recap, slow mo and cinematic\n` +
+    `make it sad with emotional piano\n` +
+    `christmas edit (i grab festive music + festive text)\n` +
+    `funny edit of my dog\n\n` +
+    `stuff i can do: pick a style (hype, sad, chill, funny, cinematic), match music to the mood, ` +
+    `add text overlays, slow mo, color filters (vibrant, black and white, dramatic), transitions between clips\n\n` +
+    `what happens after u send: i say "got it" right away, then i tell u what im making + a rough wait, ` +
+    `then a couple mins later the video lands. if ur caption is too vague to nail it ill ask u one quick question first.\n\n` +
+    `u can also just text me normally anytime (hows my video, what styles do u have, etc).\n\n` +
+    `whenever ur ready, send some clips + a caption`,
   perMinute: "hold up lemme finish the last one, hit me again in a min",
   perDay: `u maxed out today (${DAILY_VIDEO_LIMIT_PER_SENDER} edits). hit me up tomorrow`,
   systemBudget: "the demo's at capacity for today, try again tomorrow",
