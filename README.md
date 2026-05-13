@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.svg" width="150" alt="iEdit logo">
+</p>
+
 <h1 align="center">iEdit</h1>
 
 <p align="center">
