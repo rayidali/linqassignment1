@@ -205,9 +205,14 @@ function overlayTrack(
       const bg =
         o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
       const css =
+        // Load a real display font (Montserrat ExtraBold) from a CDN — if
+        // Shotstack's HTML renderer fetches it, we get a clean modern bold;
+        // if not, it just falls back to the sans stack below (no breakage).
+        `@font-face{font-family:'iEditDisplay';font-weight:800;font-display:swap;` +
+        `src:url('https://cdn.jsdelivr.net/npm/@fontsource/montserrat/files/montserrat-latin-800-normal.woff2') format('woff2')}` +
         `body{margin:0}` +
         `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-        `p{margin:0;max-width:100%;font-family:'Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:bold;` +
+        `p{margin:0;max-width:100%;font-family:'iEditDisplay','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:800;` +
         `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
         `word-wrap:break-word;overflow-wrap:break-word;` +
         (o.uppercase ? `text-transform:uppercase;` : ``) +

@@ -88,27 +88,33 @@ async function findTrack(spec: MusicSpec): Promise<JamendoTrack | null> {
     if (t) return t;
   }
 
-  const tags = spec.tags.join(",");
+  const tags = spec.tags.map((t) => t.trim()).filter(Boolean);
   const speed = tempoToSpeed(spec.tempo) ?? "";
   const ae = spec.acoustic_or_electric === "any" ? "" : spec.acoustic_or_electric;
   const search = spec.freetext.trim();
 
-  // Progressively loosen: tags+search+speed+acoustic → tags+search → search → fuzzytags.
-  // Each query pulls a pool of candidates and we pick one at random for variety.
-  if (tags && (search || speed || ae)) {
-    const t = pickOne(await fetchTracks(buildUrl({ tags, search, speed, acousticelectric: ae }, CANDIDATE_POOL)));
-    if (t) return t;
+  // Tag-driven, progressively broader. Jamendo's free-text `search` is famously
+  // loose (it returns "popular-ish" tracks, not genre matches), so it's a LAST
+  // resort — the `tags` filter does the real work. Try the full tag set first
+  // (most specific), then fall back to just the FIRST tag (the core sound/genre
+  // — the one that matters most), then fuzzy tags, then `search`. Each query
+  // pulls a pool and we pick one at random for variety.
+  const queries: Array<Record<string, string>> = [];
+  if (tags.length > 0) {
+    const all = tags.join(",");
+    queries.push({ tags: all, speed, acousticelectric: ae }); // full tags + filters (empty filters are dropped)
+    if (speed || ae) queries.push({ tags: all }); // full tags, no speed/ae
+    if (tags.length > 1) {
+      queries.push({ tags: tags[0]!, speed }); // just the genre tag (+ speed if any)
+      if (speed) queries.push({ tags: tags[0]! });
+    }
+    queries.push({ fuzzytags: all }); // loose tag match
   }
-  if (tags) {
-    const t = pickOne(await fetchTracks(buildUrl({ tags, search }, CANDIDATE_POOL)));
+  if (search) queries.push({ search }); // last resort: Jamendo's loose name search
+
+  for (const q of queries) {
+    const t = pickOne(await fetchTracks(buildUrl(q, CANDIDATE_POOL)));
     if (t) return t;
-  }
-  if (search) {
-    const t = pickOne(await fetchTracks(buildUrl({ search }, CANDIDATE_POOL)));
-    if (t) return t;
-  }
-  if (tags) {
-    return pickOne(await fetchTracks(buildUrl({ fuzzytags: tags }, CANDIDATE_POOL)));
   }
   return null;
 }
