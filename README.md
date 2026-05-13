@@ -46,7 +46,7 @@ A user's iMessage hits a **Linq** virtual number, which POSTs a signed webhook t
 | `color_filter` | `none` \| `vibrant` \| `muted` \| `bw` \| `dramatic` |
 | `transition` | `cut` \| `fade` \| `zoom` \| `slide` \| `carousel` \| `wipe` — between clips |
 | `motion` | `none` \| `zoom` \| `pan` — slow Ken-Burns move on the clips |
-| `text_overlays[]` | `{ text, position, color, uppercase, background }` |
+| `text_overlays[]` | `{ text, position, color, uppercase, background, animation }` (font is fixed: Helvetica Bold) |
 
 The prompt makes Claude **infer the vibe boldly** (gym → hard rock + fast cuts + bold text; "fast paced" → more cuts per minute; "romantic" → slower pace + soft music; "funny" → playful music, not rock/epic; christmas → christmas music + festive text) while staying **coherent and not over-styling** (no fades, filters, or slow-mo the user didn't ask for or imply). Every field has to point the same direction. If the request is genuinely undirected it asks one clarifying question and parks the job; the user's next text reply is routed back to that job and the matcher re-runs with the answer. The system prompt is cached on the Anthropic side (`cache_control: ephemeral`).
 

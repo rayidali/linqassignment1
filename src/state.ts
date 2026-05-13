@@ -101,6 +101,36 @@ function captionOf(payload: LinqWebhookPayload): string {
   return text && text.type === "text" ? text.value : "";
 }
 
+// Stable, key-order-independent fingerprint of the edit-relevant fields of a
+// plan — used to tell whether a refinement actually changed anything (we can't
+// just JSON.stringify the raw objects: one side came from jsonb, which doesn't
+// preserve key order, so they'd "differ" even when semantically identical).
+function planFingerprint(p: EditPlan): string {
+  return JSON.stringify({
+    style: p.style,
+    pace: p.pace,
+    speed: p.speed,
+    color_filter: p.color_filter,
+    transition: p.transition,
+    motion: p.motion ?? null,
+    keep_original_audio: p.keep_original_audio,
+    music: {
+      tags: [...(p.music?.tags ?? [])].sort(),
+      freetext: p.music?.freetext ?? "",
+      tempo: p.music?.tempo ?? "any",
+      acoustic_or_electric: p.music?.acoustic_or_electric ?? "any",
+    },
+    text_overlays: (p.text_overlays ?? []).map((o) => ({
+      text: o.text,
+      position: o.position,
+      color: o.color,
+      uppercase: o.uppercase,
+      background: o.background ?? "none",
+      animation: o.animation ?? "none",
+    })),
+  });
+}
+
 export async function advance(job: JobRow): Promise<AdvanceResult> {
   logger.debug({ jobId: job.id, jobType: job.type, fromState: job.state }, "advancing");
   if (job.type === "chat") {
@@ -235,6 +265,20 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
             ? { priorPlan, request: (result.refinementRequest as string | undefined) ?? "" }
             : undefined,
       });
+
+      // A refinement that came back unchanged — the matcher couldn't apply the
+      // ask (no field for it) or it was already that way. Re-rendering an
+      // identical video is pointless and reads as "it did nothing"; send the
+      // (honest) confirmation and stop instead.
+      if (isRefinement && priorPlan && planFingerprint(plan) === planFingerprint(priorPlan)) {
+        const msg =
+          plan.confirmation && plan.confirmation !== "on it, making ur edit"
+            ? plan.confirmation
+            : "hmm i couldn't change that one. i can swap the music, change the speed/pace, edit the text or colors, add transitions or a colored box behind text, that kinda thing. what do u want different?";
+        await sendTextReply(chatId, msg, `${job.id}-noop`);
+        log.info({ jobId: job.id, refinementOf }, "refinement was a no-op, replied instead of re-rendering");
+        return { nextState: "replied", resultPatch: { plan, refinementNoop: true } };
+      }
 
       const shouldAskClarification =
         !isRefinement && plan.needs_clarification && Boolean(plan.clarification_question) && clarificationCount < 1;

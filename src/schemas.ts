@@ -71,6 +71,11 @@ export type TransitionId = (typeof TRANSITION_IDS)[number];
 export const MOTION_IDS = ["none", "zoom", "pan"] as const;
 export type MotionId = (typeof MOTION_IDS)[number];
 
+// How a text overlay enters/leaves. Default "none" (it just appears) — a
+// transition is only added when the vibe/request calls for it.
+export const OVERLAY_ANIMATION_IDS = ["none", "fade", "slide_up", "slide_down"] as const;
+export type OverlayAnimationId = (typeof OVERLAY_ANIMATION_IDS)[number];
+
 export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
@@ -78,6 +83,7 @@ export const TextOverlay = z.object({
   uppercase: z.boolean(),
   // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
   background: z.string(),
+  animation: z.enum(OVERLAY_ANIMATION_IDS),
 });
 export type TextOverlay = z.infer<typeof TextOverlay>;
 

@@ -85,10 +85,11 @@ async function loadContext(jobId: string, chatId: string): Promise<{
       rendered: "almost done — sending it back",
       uploaded: "almost done — sending it back",
       delivered: "delivered",
+      replied: "handled (replied with text, no re-render needed)",
       failed: "failed",
     };
     const label = stateLabel[lastVideo.state] ?? lastVideo.state;
-    const inProgress = !["delivered", "failed"].includes(lastVideo.state);
+    const inProgress = !["delivered", "failed", "replied"].includes(lastVideo.state);
     renderNote = inProgress
       ? `There IS an edit in progress for this user right now (caption: "${caption}") — status: ${label}. It usually takes about a minute.`
       : `The user's most recent edit (caption: "${caption}") is ${label}.`;

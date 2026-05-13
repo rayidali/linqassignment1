@@ -164,6 +164,15 @@ function videoTrack(
   };
 }
 
+function overlayAnimation(a: TextOverlay["animation"] | undefined): { in?: string; out?: string } | undefined {
+  switch (a) {
+    case "fade": return { in: "fade", out: "fade" };
+    case "slide_up": return { in: "slideUp", out: "slideUp" };
+    case "slide_down": return { in: "slideDown", out: "slideDown" };
+    default: return undefined; // "none" (or unset, for plans made before this field existed) → no transition
+  }
+}
+
 function overlayTrack(
   overlays: TextOverlay[],
   outputW: number,
@@ -194,6 +203,7 @@ function overlayTrack(
         `}`;
       const start = Math.min(cursor, 8);
       cursor += 2.7; // slight gap between sequential overlays
+      const anim = overlayAnimation(o.animation);
       return {
         asset: {
           type: "html",
@@ -205,7 +215,7 @@ function overlayTrack(
         position: o.position, // "top" | "center" | "bottom"
         start,
         length: 2.5,
-        transition: { in: "fade", out: "fade" },
+        ...(anim ? { transition: anim } : {}),
       };
     }),
   };
