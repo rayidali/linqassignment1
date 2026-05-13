@@ -19,6 +19,10 @@
   <img src="https://img.shields.io/badge/status-live-brightgreen" alt="Live">
 </p>
 
+<p align="center">
+  <img src="assets/demo-nyc-trip.png" width="640" alt="iMessage chat with iEdit: a clip captioned 'a short trip to new york' in bold helvetica with lofi jazz. iEdit acks ('got it, lemme look at this'), confirms the plan ('k doing a short trip to ny edit, lofi jazz vibe, bold helvetica style title up top, should be about a min'), then delivers the finished chill edit.">
+</p>
+
 > *"christmas edit with bold text"* becomes a festive montage with the real
 > "Jingle Bells" and red uppercase overlays.
 >
