@@ -98,7 +98,7 @@ A few real edits from the demo number, paired with the texts that produced them.
   <tr>
     <td align="center"><img src="assets/example-nyc-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a short trip to new york', bold helvetica font, lofi jazz music"></td>
     <td align="center">
-      <video src="https://github.com/user-attachments/assets/b0922243-0ec9-4e01-9555-f674b2819b88" width="280" autoplay loop muted playsinline></video>
+      <video src="https://github.com/user-attachments/assets/ca593141-2cfa-4d71-a2f5-291ebc9ebcd8" width="280" autoplay loop muted playsinline></video>
       <br/><sub><i>lofi jazz, bold helvetica title up top</i></sub>
     </td>
   </tr>
@@ -112,7 +112,7 @@ A few real edits from the demo number, paired with the texts that produced them.
   <tr>
     <td align="center"><img src="assets/example-beach-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a trip to the beach' with country music and pans and pushes for transitions"></td>
     <td align="center">
-      <video src="https://github.com/user-attachments/assets/ca593141-2cfa-4d71-a2f5-291ebc9ebcd8" width="280" autoplay loop muted playsinline></video>
+      <video src="https://github.com/user-attachments/assets/b0922243-0ec9-4e01-9555-f674b2819b88" width="280" autoplay loop muted playsinline></video>
       <br/><sub><i>country track, slide transitions with zoom pushes, small title</i></sub>
     </td>
   </tr>
