@@ -38,7 +38,7 @@ below to try it on your own clips.
 
 <p align="center">
   <a href="sms:+16504687059">
-    <img alt="Message us on iMessage" src="assets/imessage-button.svg" width="300">
+    <img alt="Try it here" src="assets/imessage-button.svg" width="220">
   </a>
   <br/><br/>
   <img src="assets/imessage-qr.svg" width="160" alt="Scan to text iEdit">
