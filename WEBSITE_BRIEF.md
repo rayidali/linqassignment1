@@ -3,51 +3,198 @@
 Handoff doc for a brand new website building session. You're building a one
 page marketing site for **iEdit**, the iMessage native AI video editor whose
 backend lives in [this repo](https://github.com/rayidali/linqassignment1).
-Treat this doc as the source of truth; read it end to end before writing code.
+Read it end to end before writing code.
+
+The brief separates **immutables** (brand, tone, the primary CTA, the content
+the page must convey) from **open design space** (layout, typography choices,
+visual treatment, framework). Treat the immutables as constraints; everything
+else is yours to design.
 
 ## What you're building (one sentence)
 
-A mobile first, single page landing site for iEdit whose primary job is to get
-visitors to tap a button that opens iMessage to the demo number.
+A mobile first, single page landing site for iEdit whose primary job is to
+get visitors to tap a button that opens iMessage to the demo number.
 
 ## The product (so you know what you're selling)
 
-iEdit is an AI video editor that lives in iMessage. A user texts a demo number
-a few clips and a caption (*"hype gym edit with bold text"*), and a couple of
-minutes later they get back a TikTok style edited video with music, text
-overlays, color grade, and pacing. They can reply *"make the text yellow"* or
-*"different music"* and it re-renders. It's already deployed and works end to
-end. The backend repo's README has the full technical story if you want it.
+iEdit is an AI video editor that lives in iMessage. A user texts a demo
+number a few clips and a caption (*"hype gym edit with bold text"*), and a
+couple of minutes later they get back a TikTok style edited video with
+music, text overlays, color grade, and pacing. They can reply *"make the
+text yellow"* or *"different music"* and it re-renders. It's already
+deployed and works end to end. The backend repo's README has the full
+technical story if you want it.
 
-## Primary CTA
+---
 
-The one thing every visitor should do: **tap a button that opens iMessage to
-+1 (650) 468-7059**. On iPhone and Mac an `<a href="sms:+16504687059">` does
-this natively. A QR code encoding the same `sms:` URL is the desktop fallback.
-If you do nothing else right, get this one right.
+## Immutables
 
-## Brand
+### Primary CTA
+
+The one thing every visitor should do: **tap a button that opens iMessage
+to +1 (650) 468-7059**. On iPhone and Mac an `<a href="sms:+16504687059">`
+does this natively. A QR code encoding the same `sms:` URL is the desktop
+fallback.
+
+Make it impossible to miss. If you do nothing else right, get this right.
+
+### Brand identifiers
 
 * **Name:** iEdit (one word, capital E).
 * **Tagline (working):** "An AI video editor that lives in iMessage."
-* **Sub tagline:** "Text it a few clips and a caption. Get back a finished video."
-* **Colors:**
-  * Brand blue gradient: `#42A5F5` (top) → `#1976D2` (bottom). Use it on the
-    logo, the CTA pill, and any hero accents.
-  * White `#FFFFFF` for surfaces and inverted text.
-  * Near black text on white: `#0A0A0A`. Subtle gray for sub copy: `#71717A`.
-* **Type:** System font stack. The product feels native to iMessage, so don't
-  pull a custom display font. If you must, **Inter** is the safe choice.
-  ```
-  system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif
-  ```
-* **Tone:** Casual, direct, slightly gen z, never cringe. Short sentences.
-  **No em-dashes.** Minimal hyphens (write "fast paced" not "fast-paced").
-  Show, don't tell. Examples beat adjectives.
-* **Words to avoid in copy:** *robust, powerful, seamless, revolutionary, AI
-  powered, blazing fast, game changer*. Just say what it does.
+* **Sub tagline (working):** "Text it a few clips and a caption. Get back a
+  finished video."
+* **Brand color palette** (use freely, emphasize as you like):
+  * Brand blue gradient: `#42A5F5` → `#1976D2`
+  * Apple iMessage blue: `#007AFF`
+  * Cyan accents (good for shader / gradient treatments): `#39CDFF`,
+    `#72FFFC`
+  * White `#FFFFFF`
+  * Near black text on white: `#0A0A0A`. Subtle gray for sub copy:
+    `#71717A`
 
-## Logo (copy this verbatim into the site project)
+### Tone (this matters more than visual style)
+
+* Casual, direct, slightly gen z, never cringe. Short sentences.
+* **No em-dashes anywhere.** Use commas, periods, or rewrite.
+* Minimal hyphens. Write "fast paced", not "fast-paced".
+* Show, don't tell. Examples beat adjectives.
+* Words to avoid: *robust, powerful, seamless, revolutionary, AI powered,
+  blazing fast, game changer*. Just say what it does.
+* **Never write "Built with Claude Code"** anywhere on the site.
+
+### Content the page must convey
+
+Layout and order are open. Anywhere on the page, in whatever shape works
+for your design, the visitor should walk away knowing:
+
+* **What it is.** Name, one-line tagline, a glance at what the product does.
+* **How to try it.** The CTA. The phone number visible somewhere. A QR for
+  desktop visitors. (See "Primary CTA" above.)
+* **What it can make.** At least one concrete example of *"caption →
+  finished video"*. Two or three is ideal. Real screenshots or video
+  thumbnails beat mockups. (Real assets are listed under "Assets you'll
+  need to capture".)
+* **How it works, briefly.** Text it clips + a caption → Claude plans the
+  edit → you get the finished video back → reply with tweaks and it
+  re-renders. Doesn't need to be a numbered list; can be three sentences,
+  three cards, an animation, whatever.
+* **What it understands.** A glance at the surface area, so visitors see
+  it's not a one-trick demo: styles, music matching, pacing, speed,
+  color, transitions, motion, text overlays (any open license font),
+  multi turn refinement. The full list is in the README's "What it
+  understands" table; pull from it.
+* **Demo limits.** One line of small print. *"50 edits per person per day.
+  Royalty free music only. Best on iPhone."*
+* **A link to the GitHub repo.** Subtle is fine.
+* **Credit.** Your name or handle, year. That's it.
+
+---
+
+## Open design space
+
+### Visual direction (pick one or invent something)
+
+Whatever fits the brand and ships fast. Some directions worth considering:
+
+* **Shader gradient hero.** `@shadergradient/react` (the
+  [ruucm/shadergradient](https://github.com/ruucm/shadergradient) lib)
+  gives you an animated WebGL gradient. The user pre-tuned a config they
+  like:
+
+  ```jsx
+  <ShaderGradient
+    animate="on"
+    color1="#007AFF"
+    color2="#39CDFF"
+    color3="#72FFFC"
+    cAzimuthAngle={180}
+    cDistance={3.6}
+    cPolarAngle={90}
+    cameraZoom={1}
+    brightness={0.9}
+    grain="on"
+    lightType="3d"
+    envPreset="city"
+    type="plane"
+    shader="defaults"
+    uAmplitude={1}
+    uDensity={1.3}
+    uFrequency={5.5}
+    uSpeed={0.2}
+    uStrength={4}
+    positionX={-1.4}
+    positionY={0}
+    positionZ={0}
+    rotationX={0}
+    rotationY={10}
+    rotationZ={50}
+    reflection={0.1}
+    fov={45}
+    pixelDensity={1}
+    destination="onCanvas"
+    embedMode="off"
+    format="gif"
+    frameRate={10}
+  />
+  ```
+
+  Use it as a hero backdrop with the logo and CTA layered on top. The
+  config is a starting point; tweak freely. Requires React (Next.js, Remix,
+  or a React island in Astro).
+
+* **CSS / mesh gradient.** No WebGL, no React requirement. Tools like
+  [Mesh.cool](https://meshgradient.com), CSS conic gradients, or hand
+  authored multi stop gradients can get you a similar feel with much less
+  weight.
+
+* **A real video loop.** A muted, looping clip from an actual iEdit output
+  (when available) as the hero background. Most "showy" but heaviest.
+
+* **Minimalist.** Plain white or near black background, brand color used
+  only for the CTA and accents. Defaults to "looks intentional" with the
+  least effort.
+
+Bias toward whatever you can ship cleanly. A gorgeous shader hero you can't
+finish loses to a clean gradient that ships.
+
+### Typography
+
+Open. The product feels native to iMessage, so a system font stack is a
+strong default. If you reach for a custom typeface, **Inter** is the safe
+choice; **Geist** / **Geist Mono**, **General Sans**, or **Söhne** are all
+fine. Avoid Google Fonts that scream "tech blog circa 2018" (Roboto, Open
+Sans, Lato).
+
+### Tech stack
+
+Recommendations, not rules:
+
+* **Astro + Tailwind** if you want a static site, near zero JS, and you're
+  not committing to shader-gradient (which wants React).
+* **Next.js (App Router) + Tailwind** if you do want the shader gradient or
+  any other React-only library. Vercel deploy is one click.
+* Hosting: **Vercel** or **Netlify**, free tier is plenty.
+* Domain: check `iedit.app` / `iedit.video` / `iedit.chat` on Cloudflare or
+  Namecheap. `iedit.vercel.app` is fine for now.
+
+Avoid: a CMS (no content to manage), Webflow (you already have code
+control).
+
+### Page structure
+
+There is no prescribed order. Single scrolling page; sectioned or
+continuous, your call. The only structural constraint: the CTA should be
+visible (or one short scroll away) on first load.
+
+---
+
+## Reference SVG assets
+
+The backend repo ships logo / CTA pill / QR as SVGs you can copy. Use them
+as is, or remix them.
+
+### Logo (copy this verbatim if you want)
 
 ```svg
 <svg viewBox="0 0 680 480" xmlns="http://www.w3.org/2000/svg">
@@ -64,11 +211,12 @@ If you do nothing else right, get this one right.
 </svg>
 ```
 
-## CTA pill (reference SVG)
+### CTA pill (reference; redesign as needed)
 
-Rendered natural size 260×88. Wrap in `<a href="sms:+16504687059">`. For a
-real website, re-implement as an HTML button so you get proper `:hover` /
-`:active` / focus ring states; this SVG is fine for static contexts.
+This is the "Try it here" pill from the README. Fine to use as a static
+asset; better to re-implement as an HTML button with proper hover, active,
+and focus-visible states, plus a real focus ring. The SVG below is purely a
+visual reference for the look.
 
 ```svg
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 88" role="img" aria-label="Try it here">
@@ -99,117 +247,57 @@ real website, re-implement as an HTML button so you get proper `:hover` /
 </svg>
 ```
 
-## QR code
+### QR code
 
-There's a brand blue QR encoding `sms:+16504687059` in the backend repo at
-`assets/imessage-qr.svg`. Copy it over. To regenerate for a different demo
-number:
+Brand blue QR encoding `sms:+16504687059` lives in the backend repo at
+`assets/imessage-qr.svg`. Copy it over. To regenerate for a different
+demo number:
 
 ```bash
 npx -p qrcode -- qrcode "sms:+1NEWNUMBER" -t svg -d 1976D2 -l FFFFFF -o public/imessage-qr.svg
 ```
 
-## Page structure
-
-Single scrollable landing page. Section order below. Prune ruthlessly; if a
-section doesn't earn its space, cut it.
-
-### 1. Hero (above the fold)
-* Centered logo at ~120px, "iEdit" wordmark below it.
-* Tagline and sub tagline.
-* The CTA pill. Below it in small type: `+1 (650) 468-7059` and a note
-  "demo line, may rotate".
-* QR code visible on desktop, hidden on mobile (mobile users will tap).
-
-### 2. Examples strip ("what you send, what you get back")
-This is what sells the product. Three or four short cards in a row (stacked
-on mobile). Each card shows on the left an iMessage style bubble with the
-user's caption, and on the right a thumbnail of the resulting video.
-Suggested examples:
-* "christmas edit with bold text" → festive carol montage
-* "slow mo cinematic black and white" → moody single clip
-* "recap of my trip from these pics" → carousel of stills with zoom
-* "make the text yellow" → an updated video (shows the refinement flow)
-
-### 3. How it works (compact, three steps)
-1. **Text it your clips and a caption.** *"hype gym edit, big bold text"*
-2. **Claude plans the edit.** It picks the music, the pacing, the overlays,
-   the color grade.
-3. **You get the finished video back.** Reply with tweaks and it re-renders.
-
-### 4. What it understands (grid)
-Pull from the README's "What it understands" table. Styles, music, pacing,
-speed, color, transitions, motion, text overlays, multi turn. Two columns
-on desktop, one on mobile.
-
-### 5. CTA repeat
-Same big button, same QR. One line of fine print: *"Demo limits: 50 edits
-per person per day. Royalty free music only. Best on iPhone."*
-
-### 6. Footer
-Tiny. Your name / handle, year, a link to the GitHub repo. That's it. **Do
-not** write "Built with Claude Code" anywhere.
-
-## Things to absolutely not do
-
-* No em-dashes in copy. Use commas, periods, or rewrite the sentence.
-* No stock photo hero imagery. Use the logo, the SVGs, and (when you have
-  them) real screenshots.
-* No "AI-powered video editor" or any variant. The product is *an AI video
-  editor*.
-* No newsletter signup, pricing table, testimonials, or feature comparison
-  table. It's a demo, not a SaaS launch.
-* No tracking that requires a cookie banner. If you want analytics, use
-  Plausible (cookie free). Otherwise skip.
-* No autoplay video with sound. Muted, looped, `playsinline` only.
-
-## Tech stack (recommended)
-
-Opinionated. Push back only with a good reason.
-
-* **Framework:** [Astro](https://astro.build). Beats Next.js for a content
-  heavy single page site, ships near zero JS, builds to static HTML, hits
-  perfect Lighthouse scores out of the box.
-* **Styling:** Tailwind CSS (`npx astro add tailwind`).
-* **Hosting:** Vercel or Netlify. One click Astro deploy on either, free
-  tier is plenty.
-* **Don't reach for:** Next.js (overkill, too much JS), a CMS (no content
-  to manage), Webflow (you have full code control already).
-* **Domain (optional):** check `iedit.app`, `iedit.video`, `iedit.chat` on
-  Cloudflare or Namecheap. Otherwise `iedit.vercel.app` is fine for now.
+---
 
 ## Assets you'll need to capture before launch
 
 Without at least one or two of these the site will feel hollow.
 
-1. **A real video output.** The best edit the bot has made for you. 5 to 15
-   seconds. Compress with HandBrake (Web → Vimeo 1080p preset) before
-   shipping. Embed muted+loop, or as a poster+click to play.
+1. **A real video output.** The best edit the bot has made for you. Five to
+   fifteen seconds. Compress with HandBrake (Web → Vimeo 1080p preset) before
+   shipping. Embed muted + loop, or as a poster image with click to play.
 2. **iMessage conversation screenshots.** Real exchanges, cropped tight.
-   These show actual product behavior, not a mockup. Gold.
-3. **A composed hero shot (optional, nice).** A phone mock with the iMessage
-   conversation visible and the rendered video playing in the bubble. Nano
-   Banana Pro can render this from a screenshot plus a prompt.
+   These show actual product behavior, not a mockup. The single most
+   convincing thing you can put on the page.
+3. **A composed hero shot (optional).** A phone mock with the iMessage
+   conversation visible and the rendered video playing in the bubble.
+   Nano Banana Pro can render this from a screenshot plus a prompt.
 
-Prioritize at least one real screenshot in section 2.
+Prioritize at least one real screenshot.
+
+---
+
+## Things to absolutely not do
+
+* Em-dashes anywhere in copy.
+* The phrase "AI-powered video editor" or any variant.
+* A newsletter signup, pricing table, testimonials, or feature comparison
+  table. It's a demo, not a SaaS launch.
+* Tracking that requires a cookie banner. Plausible (cookie free) is fine
+  if you want analytics; otherwise skip.
+* Autoplay video with sound. Muted, looped, `playsinline` only.
+* A "Built with Claude Code" footer.
+
+---
 
 ## Reference links
 
 * **Backend GitHub repo:** https://github.com/rayidali/linqassignment1
 * **Backend live URL:** https://linq-video-editor.onrender.com
   (`/healthz`, `/version`; not user facing)
-* **Demo phone:** `+1 (650) 468-7059` (may rotate; check the repo README for
-  the current number)
-* **Backend README:** the technical companion to this site
-
-## Visual reference (for tone, not to copy)
-
-* [Linear](https://linear.app), minimal and confident, lots of whitespace
-* [Cron](https://cron.com), tiny landing page done well
-* [Raycast](https://raycast.com), bold type, clean color blocks
-* [Vercel](https://vercel.com), great "what it does" section with motion
-
-Match the level of restraint. Don't clone the layouts.
+* **Demo phone:** `+1 (650) 468-7059` (may rotate; check the repo README
+  for the current number)
+* **ShaderGradient lib:** https://github.com/ruucm/shadergradient
 
 ## Out of scope for v1
 
