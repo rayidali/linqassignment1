@@ -64,11 +64,20 @@ export const MusicSpec = z.object({
 });
 export type MusicSpec = z.infer<typeof MusicSpec>;
 
+export const TRANSITION_IDS = ["cut", "fade", "zoom", "slide", "carousel", "wipe"] as const;
+export type TransitionId = (typeof TRANSITION_IDS)[number];
+
+// Slow camera move applied across each clip ("Ken Burns").
+export const MOTION_IDS = ["none", "zoom", "pan"] as const;
+export type MotionId = (typeof MOTION_IDS)[number];
+
 export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
   color: z.string(), // hex like "#ffffff" or a CSS color name; sanitized at render
   uppercase: z.boolean(),
+  // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
+  background: z.string(),
 });
 export type TextOverlay = z.infer<typeof TextOverlay>;
 
@@ -92,7 +101,8 @@ export const EditPlan = z.object({
   pace: z.enum(PACE_IDS),
   speed: z.enum(["slow", "normal", "fast"]), // "slow" ≈ 0.5x; only applied to single-clip edits
   color_filter: z.enum(["none", "vibrant", "muted", "bw", "dramatic"]),
-  transition: z.enum(["cut", "fade", "zoom"]), // between clips; multi-clip only
+  transition: z.enum(TRANSITION_IDS), // between clips; multi-clip only
+  motion: z.enum(MOTION_IDS), // slow Ken-Burns move on the clips
   text_overlays: z.array(TextOverlay),
 });
 export type EditPlan = z.infer<typeof EditPlan>;

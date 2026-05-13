@@ -6,7 +6,14 @@ import { z } from "zod/v4";
 import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { scrubStyle } from "./chat.js";
-import { EditPlan as EditPlanSchema, STYLE_IDS, PACE_IDS, JAMENDO_TAGS } from "../schemas.js";
+import {
+  EditPlan as EditPlanSchema,
+  STYLE_IDS,
+  PACE_IDS,
+  TRANSITION_IDS,
+  MOTION_IDS,
+  JAMENDO_TAGS,
+} from "../schemas.js";
 import type { EditPlan } from "../schemas.js";
 
 let _client: Anthropic | null = null;
@@ -35,13 +42,15 @@ const PlanSchema = z.object({
   pace: z.enum([...PACE_IDS] as [string, ...string[]]),
   speed: z.enum(["slow", "normal", "fast"]),
   color_filter: z.enum(["none", "vibrant", "muted", "bw", "dramatic"]),
-  transition: z.enum(["cut", "fade", "zoom"]),
+  transition: z.enum([...TRANSITION_IDS] as [string, ...string[]]),
+  motion: z.enum([...MOTION_IDS] as [string, ...string[]]),
   text_overlays: z.array(
     z.object({
       text: z.string().max(80),
       position: z.enum(["top", "center", "bottom"]),
       color: z.string(),
       uppercase: z.boolean(),
+      background: z.string(),
     }),
   ),
 });
@@ -113,14 +122,16 @@ OUTPUT — a JSON object with ALL of these fields:
 
 • color_filter — "none" by DEFAULT. Set it only if the wording asks: "bw" (black & white / monochrome / "no color"), "vibrant" (vibrant / poppy / saturated / "make the colors pop"), "muted" (faded / washed-out / vintage / film-grain / "aesthetic film look"), "dramatic" (moody / dark / high-contrast / "movie color" / teal-orange). Don't grade on your own.
 
-• transition — "cut" by DEFAULT (clean hard cuts — best for almost everything, and the only one that suits hype). "fade" only if they ask for smooth/soft/flowy/crossfade transitions (fits chill/sad/romantic/cinematic). "zoom" only if they ask for punchy/zoom/whip cuts (fits hype/funny). Multi-clip only. Don't add fades on your own.
+• transition — between-clip cuts (multi-clip only). "cut" by DEFAULT — clean hard cuts look best for almost everything, and it's the only one that suits hype. Change it ONLY if the request/vibe clearly calls for it: "fade" (soft / smooth / flowy / dip-to-black — chill, sad, romantic, cinematic), "wipe" (filmic wipe — cinematic, old-school), "slide" (clean sliding cuts), "carousel" (snappy card-slide cuts that cycle direction — the TikTok recap/story look; great for "trip recap", "highlights of my week", "summer rewind"), "zoom" (punchy zoom cuts — hype, funny). Do NOT add a transition the user didn't ask for or clearly imply.
+
+• motion — a slow camera move applied across the clips ("Ken Burns"). "none" by DEFAULT. Use "zoom" (slow push in/out — makes still photos and slow shots feel alive) or "pan" (slow left/right glide — more for scenic/cinematic). If the user sent PHOTOS or it's a slideshow, prefer "zoom" so the stills aren't frozen. Pointless on fast/hype edits (a ~1s clip barely moves) and on already-action-packed footage — leave "none" there. Don't add motion the user didn't ask for or clearly imply.
 
 • text_overlays — on-screen text, as an array (usually 0-2 items; 3 max — don't overload):
    - If the user gives EXACT text ('put "happy 25th sarah"', 'caption it "we made it"'), use it verbatim.
    - If a theme implies obvious text and they seem to want some, infer it: birthday -> ["happy birthday"]; christmas -> ["merry christmas"]; graduation -> ["the class of 2026"]; gym -> a hype line like ["no days off"]; "in memory of grandpa" -> ["forever in our hearts"].
    - If they want text but didn't say what, write something short (≤6 words) fitting the vibe.
    - If they clearly DON'T want text, or it's a clean aesthetic/cinematic edit where text would clutter it, return [].
-   Each overlay: text; position ("top" = title-ish, "center" = big emphasis/punchline, "bottom" = caption-ish); color (hex like "#ffffff" or a CSS color name — white by default, but theme-fitting: gold "#ffd700" birthday, red "#c0392b" christmas, soft pink "#e8b4c8" romantic — or exactly what the user names); uppercase (true for hype/funny/bold energy, false for sad/chill/cinematic/romantic — unless the user says otherwise).
+   Each overlay: text; position ("top" = title-ish, "center" = big emphasis/punchline, "bottom" = caption-ish); color (hex like "#ffffff" or a CSS color name — white by default, but theme-fitting: gold "#ffd700" birthday, red "#c0392b" christmas, soft pink "#e8b4c8" romantic — or exactly what the user names); uppercase (true for hype/funny/bold energy, false for sad/chill/cinematic/romantic — unless the user says otherwise); background ("none" by DEFAULT — text just sits on the video with a soft shadow; set it to a color ONLY if the user wants a "text in a box / caption bar" look or a bold poster-y vibe clearly calls for it, e.g. a bright pill behind a hype line — pick a saturated color that reads against white text).
 
 ────────────────────────────────────────
 WORKED EXAMPLES (the reasoning, not just the output):
@@ -131,9 +142,11 @@ WORKED EXAMPLES (the reasoning, not just the output):
 
 "funny edit of my dog being weird" — funny = playful, NOT serious. style "funny"; pace "fast" (snappy comedic timing); music {tags:["happy","groovy"],freetext:"quirky goofy upbeat",tempo:"medium",acoustic_or_electric:"any"} — no rock/funk/epic/dramatic; speed "normal"; color_filter "none"; transition "cut" (or "zoom" only if they want punchy comedic cuts); text_overlays [{text:"HE'S MENTALLY UNWELL",position:"center",color:"#ffffff",uppercase:true}]. confirmation: "lol funny one of ur dog, goofy bouncy music, big meme text".
 
-"slow motion cinematic shot in black and white" (1 clip) — single clip, so pace is moot. style "cinematic"; pace "medium" (ignored); speed "slow" (they said slow motion -> 0.5x); music {tags:["cinematic","ambient","dramatic"],freetext:"moody slow cinematic",tempo:"slow",acoustic_or_electric:"any"}; color_filter "bw"; transition "cut"; text_overlays []. confirmation: "k slowmo cinematic edit, black and white, moody score, no text".
+"slow motion cinematic shot in black and white" (1 clip) — single clip, so pace is moot. style "cinematic"; pace "medium" (ignored); speed "slow" (they said slow motion -> 0.5x); motion "zoom" (a slow push on the single shot is cinematic); music {tags:["cinematic","ambient","dramatic"],freetext:"moody slow cinematic",tempo:"slow",acoustic_or_electric:"any"}; color_filter "bw"; transition "cut"; text_overlays []. confirmation: "k slowmo cinematic edit, black and white, slow push in, moody score".
 
-"just make something cool with these" (3 clips, nothing else) — has clips but no vibe at all. needs_clarification true; clarification_question "what vibe u want? hype, chill, sad, funny, cinematic, or smth specific?". (Fill the rest with reasonable neutral values: style "chill", pace "medium", etc.)
+"recap of my summer trip from these pics" (8 photos) — a photo recap reel. style "chill"; pace "fast" (snappy recap energy); motion "zoom" (so the photos aren't frozen); music {tags:["chillout","happy","uplifting"],freetext:"sunny summer feel good",tempo:"medium",acoustic_or_electric:"any"}; speed "normal"; color_filter "none"; transition "carousel" (the slide-y recap look); text_overlays [{text:"summer '26",position:"bottom",color:"#ffffff",uppercase:false,background:"none"}]. confirmation: "making a summer recap reel from ur pics, snappy slide cuts, lil zoom on each, chill summer track".
+
+"just make something cool with these" (3 clips, nothing else) — has clips but no vibe at all. needs_clarification true; clarification_question "what vibe u want? hype, chill, sad, funny, cinematic, or smth specific?". (Fill the rest with reasonable neutral values: style "chill", pace "medium", motion "none", transition "cut", etc.)
 
 Read the WHOLE request, infer everything it implies, keep every field coherent, and don't ask if you can reasonably guess.
 
@@ -198,6 +211,7 @@ export async function planEdit(
       pace: plan.pace,
       music: plan.music,
       transition: plan.transition,
+      motion: plan.motion,
       colorFilter: plan.color_filter,
       speed: plan.speed,
       keepAudio: plan.keep_original_audio,

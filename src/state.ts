@@ -287,6 +287,7 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
           musicSpec,
           musicResolved: Boolean(resolvedMusic),
           transition: plan.transition,
+          motion: plan.motion,
           colorFilter: plan.color_filter,
           speed: plan.speed,
         },

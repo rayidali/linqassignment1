@@ -53,6 +53,7 @@ export type ShotstackEdit = {
         start: number;
         length: number | "auto" | "end";
         transition?: { in?: string; out?: string };
+        effect?: string; // slow camera move across the clip (zoomIn, slideLeft, …)
         position?: string;
         offset?: { x?: number; y?: number };
         fit?: "cover" | "crop" | "contain" | "none";
@@ -99,10 +100,29 @@ function mapColorFilter(f: EditPlan["color_filter"]): string | undefined {
   }
 }
 
-function mapTransition(t: EditPlan["transition"]): { in?: string; out?: string } | undefined {
-  if (t === "fade") return { in: "fade", out: "fade" };
-  if (t === "zoom") return { in: "zoom", out: "zoom" };
-  return undefined; // "cut" → hard cut
+// Built-in Shotstack transition names. "carousel" cycles direction per clip
+// (the snappy "recap reel" look); the others use one effect for in + out.
+const CAROUSEL_DIRS = ["carouselLeft", "carouselRight", "carouselUp", "carouselDown"] as const;
+function clipTransition(t: EditPlan["transition"], clipIndex: number): { in?: string; out?: string } | undefined {
+  switch (t) {
+    case "fade": return { in: "fade", out: "fade" };
+    case "zoom": return { in: "zoom", out: "zoom" };
+    case "slide": return { in: "slideLeft", out: "slideLeft" };
+    case "wipe": return { in: "wipeLeft", out: "wipeLeft" };
+    case "carousel": {
+      const d = CAROUSEL_DIRS[clipIndex % CAROUSEL_DIRS.length]!;
+      return { in: d, out: d };
+    }
+    default: return undefined; // "cut" → hard cut
+  }
+}
+
+// Clip `effect` = slow camera move across the clip's duration ("Ken Burns").
+const PAN_DIRS = ["slideLeft", "slideRight"] as const;
+function clipMotionEffect(m: EditPlan["motion"], clipIndex: number): string | undefined {
+  if (m === "zoom") return clipIndex % 2 === 0 ? "zoomIn" : "zoomOut";
+  if (m === "pan") return PAN_DIRS[clipIndex % PAN_DIRS.length]!;
+  return undefined;
 }
 
 function mapSpeed(s: EditPlan["speed"]): number {
@@ -114,7 +134,14 @@ function mapSpeed(s: EditPlan["speed"]): number {
 function videoTrack(
   clips: string[],
   perClipS: number,
-  opts: { mute: boolean; sourceVolume: number; filter?: string; speed: number; transition?: { in?: string; out?: string } },
+  opts: {
+    mute: boolean;
+    sourceVolume: number;
+    filter?: string;
+    speed: number;
+    transition: EditPlan["transition"];
+    motion: EditPlan["motion"];
+  },
 ): ShotstackEdit["timeline"]["tracks"][number] {
   const single = clips.length === 1;
   return {
@@ -122,13 +149,16 @@ function videoTrack(
       const asset: Record<string, unknown> = { type: "video", src: url, volume: opts.mute ? 0 : opts.sourceVolume };
       // Speed only applied for single-clip — multi-clip trim math gets fiddly.
       if (single && opts.speed !== 1.0) asset.speed = opts.speed;
+      const transition = single ? undefined : clipTransition(opts.transition, i);
+      const effect = clipMotionEffect(opts.motion, i); // motion applies to single clips too (a Ken Burns push)
       return {
         asset,
         start: single ? 0 : i * perClipS,
         length: single ? ("auto" as const) : perClipS,
         fit: "crop" as const,
         ...(opts.filter ? { filter: opts.filter } : {}),
-        ...(single || !opts.transition ? {} : { transition: opts.transition }),
+        ...(transition ? { transition } : {}),
+        ...(effect ? { effect } : {}),
       };
     }),
   };
@@ -149,13 +179,18 @@ function overlayTrack(
   return {
     clips: overlays.map((o) => {
       const color = sanitizeColor(o.color);
+      const bg =
+        o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
       const css =
         `body{margin:0}` +
         `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
         `p{margin:0;max-width:100%;font-family:Helvetica,Arial,sans-serif;font-weight:bold;` +
-        `font-size:${fontSize}px;line-height:1.15;color:${color};text-align:center;` +
-        `text-shadow:0 3px 14px rgba(0,0,0,0.75);word-wrap:break-word;overflow-wrap:break-word;` +
+        `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
+        `word-wrap:break-word;overflow-wrap:break-word;` +
         (o.uppercase ? `text-transform:uppercase;` : ``) +
+        (bg
+          ? `background-color:${bg};border-radius:0.18em;padding:0.08em 0.42em;`
+          : `text-shadow:0 3px 14px rgba(0,0,0,0.75);`) +
         `}`;
       const start = Math.min(cursor, 8);
       cursor += 2.7; // slight gap between sequential overlays
@@ -205,7 +240,8 @@ export function buildEdit(
       sourceVolume: 0.3, // when keeping original audio, duck it under the music
       filter: mapColorFilter(plan.color_filter),
       speed: mapSpeed(plan.speed),
-      transition: mapTransition(plan.transition),
+      transition: plan.transition,
+      motion: plan.motion,
     }),
   );
 

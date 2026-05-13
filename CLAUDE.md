@@ -61,8 +61,9 @@ The webhook also dedups on `Job.externalId` (a `findUnique` before `checkAccess`
 - `pace` — `very_fast` | `fast` | `medium` | `slow` | `very_slow` (cuts-per-minute in a multi-clip montage; maps to a per-clip duration via `PACE_TO_CLIP_SECONDS` ≈ 1s … 6.5s; ignored for single-clip edits, which use `speed`)
 - `speed` — `slow` (≈0.5x slow-mo) | `normal` | `fast` (applied to single-clip edits only)
 - `color_filter` — `none` | `vibrant` (Shotstack "boost") | `muted` | `bw` (greyscale) | `dramatic` (contrast)
-- `transition` — `cut` | `fade` | `zoom` (between clips; multi-clip only)
-- `text_overlays[]` — `{ text, position: top|center|bottom, color: hex/name (sanitized), uppercase }`
+- `transition` — `cut` | `fade` | `zoom` | `slide` (slideLeft) | `carousel` (cycles direction per clip — the "recap reel" look) | `wipe` (wipeLeft) — between clips; multi-clip only; default `cut`
+- `motion` — `none` | `zoom` (slow Ken-Burns push, alternating in/out per clip) | `pan` (slow left/right glide per clip) — applied as a clip `effect`; default `none`; the matcher uses it for photo slideshows / cinematic
+- `text_overlays[]` — `{ text, position: top|center|bottom, color: hex/name (sanitized), uppercase, background: "none" | a color (a rounded pill behind the text) }`
 
 The renderer (`src/templates/index.ts` → `buildEdit(plan, clips, outputSize, musicUrl)`) translates the plan to Shotstack JSON. `STYLE_PRESETS` holds per-style defaults (overlay font scale, a fallback `MusicSpec`); `PACE_TO_CLIP_SECONDS` maps `pace` → montage clip duration (with a 2s floor when there are only 2 clips). The matcher's big system prompt is cached (`cache_control: ephemeral`).
 
