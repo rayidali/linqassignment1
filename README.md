@@ -38,12 +38,12 @@ below to try it on your own clips.
 
 <p align="center">
   <a href="sms:+16504687059">
-    <img alt="Text iEdit on iMessage" src="https://img.shields.io/badge/Text%20iEdit-%2B1%20%28650%29%20468--7059-007AFF?style=for-the-badge&logo=apple&logoColor=white">
+    <img alt="Message us on iMessage" src="assets/imessage-button.svg" width="300">
   </a>
   <br/><br/>
   <img src="assets/imessage-qr.svg" width="160" alt="Scan to text iEdit">
   <br/>
-  <sub>Tap the button on iPhone or Mac to open Messages. On desktop, scan the QR with your phone. (Demo line, may rotate.)</sub>
+  <sub>Tap the button on iPhone or Mac to open Messages to <b>+1 (650) 468-7059</b>. On desktop, scan the QR with your phone. (Demo line, may rotate.)</sub>
 </p>
 
 1. Text anything to start the chat.
