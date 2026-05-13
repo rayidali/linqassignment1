@@ -70,6 +70,20 @@ export type ShotstackEdit = {
 
 export type OutputSize = { width: number; height: number };
 
+// Shotstack's sandbox plan caps render output at the "1080" preset: long side
+// ≤ 1920, SHORT side ≤ 1080. A 9:16 phone video (1080×1920) is fine, but a 3:4
+// photo (1440×1920) isn't — clamp so a non-9:16 source doesn't get the whole
+// render 403'd. (Bump these if you upgrade the Shotstack plan.)
+const SHOTSTACK_MAX_LONG = 1920;
+const SHOTSTACK_MAX_SHORT = 1080;
+function clampOutputSize(sz: OutputSize): OutputSize {
+  const longSide = Math.max(sz.width, sz.height) || 1;
+  const shortSide = Math.min(sz.width, sz.height) || 1;
+  const scale = Math.min(1, SHOTSTACK_MAX_LONG / longSide, SHOTSTACK_MAX_SHORT / shortSide);
+  const even = (n: number) => Math.max(2, 2 * Math.round((n * scale) / 2));
+  return { width: even(sz.width), height: even(sz.height) };
+}
+
 const NAMED_COLORS = new Set([
   "white", "black", "red", "blue", "green", "yellow", "gold", "pink",
   "purple", "orange", "cyan", "magenta", "gray", "grey", "silver",
@@ -193,7 +207,7 @@ function overlayTrack(
       const css =
         `body{margin:0}` +
         `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-        `p{margin:0;max-width:100%;font-family:Helvetica,Arial,sans-serif;font-weight:bold;` +
+        `p{margin:0;max-width:100%;font-family:'Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:bold;` +
         `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
         `word-wrap:break-word;overflow-wrap:break-word;` +
         (o.uppercase ? `text-transform:uppercase;` : ``) +
@@ -234,7 +248,7 @@ export function buildEdit(
   opts: { safe?: boolean } = {},
 ): ShotstackEdit {
   const preset = STYLE_PRESETS[plan.style];
-  const size = outputSize ?? { width: 1080, height: 1920 };
+  const size = clampOutputSize(outputSize ?? { width: 1080, height: 1920 });
   const safe = opts.safe === true;
 
   // Per-clip duration for the montage. With only 2 clips, hold a 2s floor so a

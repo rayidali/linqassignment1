@@ -46,7 +46,7 @@ A user's iMessage hits a **Linq** virtual number, which POSTs a signed webhook t
 | `color_filter` | `none` \| `vibrant` \| `muted` \| `bw` \| `dramatic` |
 | `transition` | `cut` \| `fade` \| `zoom` \| `slide` \| `carousel` \| `wipe` — between clips |
 | `motion` | `none` \| `zoom` \| `pan` — slow Ken-Burns move on the clips |
-| `text_overlays[]` | `{ text, position, color, uppercase, background, animation }` (font is fixed: Helvetica Bold) |
+| `text_overlays[]` | `{ text, position, color, uppercase, background, animation }` (font is fixed — one bold sans-serif) |
 
 The prompt makes Claude **infer the vibe boldly** (gym → hard rock + fast cuts + bold text; "fast paced" → more cuts per minute; "romantic" → slower pace + soft music; "funny" → playful music, not rock/epic; christmas → christmas music + festive text) while staying **coherent and not over-styling** (no fades, filters, or slow-mo the user didn't ask for or imply). Every field has to point the same direction. If the request is genuinely undirected it asks one clarifying question and parks the job; the user's next text reply is routed back to that job and the matcher re-runs with the answer. The system prompt is cached on the Anthropic side (`cache_control: ephemeral`).
 
@@ -54,7 +54,7 @@ The prompt makes Claude **infer the vibe boldly** (gym → hard rock + fast cuts
 
 **Rendering (`src/templates/index.ts` → `buildEdit`):** translates the `EditPlan` into a [Shotstack](https://shotstack.io) edit (timeline JSON) — montage timing from `pace` (`PACE_TO_CLIP_SECONDS`), the music track, muted/ducked source audio, text overlays as wrapping HTML assets (optionally on a colored pill), the color filter, the transition (cut/fade/zoom/slide/carousel/wipe), and a slow Ken-Burns `effect` per clip when `motion` is set. The render is polled until done, the output is pre-uploaded to Linq as an attachment, and the video is texted back with a `here's ur {style} edit` caption.
 
-**Media normalization (`src/services/transcode.ts`):** every uploaded clip is normalized *before* it touches Shotstack — ffmpeg bakes iPhone rotation into the pixels, transcodes HEVC→H.264 (CRF 21), caps the long side at 1920px (1080p output); images (incl. HEIC, via `sharp`) are auto-rotated from EXIF and looped into a short clip. The first clip's dimensions size the output, so a portrait source gives a portrait video.
+**Media normalization (`src/services/transcode.ts`):** every uploaded clip is normalized *before* it touches Shotstack — ffmpeg bakes iPhone rotation into the pixels, transcodes HEVC→H.264 (CRF 21), caps the long side at 1920px; images (incl. HEIC, via `sharp`) are auto-rotated from EXIF and looped into a short clip. The first clip's dimensions size the render output (so a portrait source gives a portrait video), clamped to fit Shotstack's plan limit (long ≤ 1920, short ≤ 1080).
 
 **Access control (`src/services/access.ts`):** first-use opt-in (reply `OK`), per-sender video limits, a system-wide daily budget, and an allowlist (the dev's test phone) that skips the per-minute limit. Tracked in a `Sender` table; the webhook dedups on the Linq event id so retries don't double-count.
 
@@ -139,5 +139,5 @@ ESM/NodeNext rule: relative imports end in `.js` even though the source is `.ts`
 - Royalty-free music only — no famous/copyrighted tracks; the matcher names public-domain equivalents for themes. Tag-based matching is good for common cases, not perfect.
 - `speed` (slow-mo) applies to single-clip edits only (multi-clip trim math gets fiddly).
 - Source audio is all-or-nothing (muted, or kept and ducked to 0.3) — no per-clip audio control.
-- Overlay font is Helvetica Bold only (custom display fonts need a hosted `.ttf`).
+- Overlay font is one fixed bold sans-serif (the HTML asset's `font-family`, which resolves to whatever bold sans Shotstack's render env has); a real font picker would mean switching overlays to Shotstack's `text` asset with declared `timeline.fonts`.
 - Heavy transcoding (e.g. 4K → 1080p) is CPU-bound on a single core, so very long source clips add latency; there's a 150MB input-size cap as a guard.
