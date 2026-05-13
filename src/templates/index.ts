@@ -200,6 +200,26 @@ function overlayAnimation(a: TextOverlay["animation"] | undefined): { in?: strin
   }
 }
 
+// Resolves an open-license / Google Fonts family name to an @fontsource CDN
+// @font-face block (covers ~all of Google Fonts; no API key needed). The two
+// src urls (700 then 400) let the browser use whichever weight that font
+// ships; if neither exists (typo, or a proprietary name we can't host), the
+// @font-face yields nothing and the caller's font-family fallback chain kicks
+// in. Returns null for an empty/unusable name.
+function namedFontFace(rawName: string | undefined): { family: string; faceCss: string } | null {
+  const cssName = (rawName ?? "").replace(/[^a-zA-Z0-9 ]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  if (!cssName) return null;
+  const slug = cssName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!slug) return null;
+  const base = `https://cdn.jsdelivr.net/npm/@fontsource/${slug}/files/${slug}-latin`;
+  return {
+    family: cssName,
+    faceCss:
+      `@font-face{font-family:'${cssName}';font-weight:100 900;font-display:swap;` +
+      `src:url('${base}-700-normal.woff2') format('woff2'),url('${base}-400-normal.woff2') format('woff2')}`,
+  };
+}
+
 function overlayTrack(
   overlays: TextOverlay[],
   outputW: number,
@@ -217,15 +237,18 @@ function overlayTrack(
       const color = sanitizeColor(o.color);
       const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
       const f = FONT_SPECS[o.font ?? "bold_sans"] ?? FONT_SPECS.bold_sans;
+      const nf = namedFontFace(o.font_name); // a specific Google Font, if the user asked for one
       const fontSize = Math.max(16, Math.round(minSide * fontScale * (FONT_SIZE_FACTOR[o.size ?? "medium"] ?? 1)));
       const stroke =
         o.outline === "dark" ? `-webkit-text-stroke:0.07em #000;paint-order:stroke fill;` :
         o.outline === "light" ? `-webkit-text-stroke:0.07em #fff;paint-order:stroke fill;` : ``;
+      const fontStack = `${nf ? `'${nf.family}',` : ""}'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif`;
       const css =
         `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
+        (nf ? nf.faceCss : ``) +
         `body{margin:0}` +
         `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-        `p{margin:0;max-width:100%;font-family:'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:${f.weight};` +
+        `p{margin:0;max-width:100%;font-family:${fontStack};font-weight:${f.weight};` +
         `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
         `word-wrap:break-word;overflow-wrap:break-word;` +
         (o.uppercase ? `text-transform:uppercase;` : ``) +
@@ -278,7 +301,7 @@ export function buildEdit(
   );
 
   const overlays = safe
-    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const, font: "bold_sans" as const, size: "medium" as const, outline: "none" as const }))
+    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const, font_name: "", font: "bold_sans" as const, size: "medium" as const, outline: "none" as const }))
     : plan.text_overlays;
 
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];

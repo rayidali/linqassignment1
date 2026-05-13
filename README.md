@@ -46,7 +46,7 @@ A user's iMessage hits a **Linq** virtual number, which POSTs a signed webhook t
 | `color_filter` | `none` \| `vibrant` \| `muted` \| `bw` \| `dramatic` |
 | `transition` | `cut` \| `fade` \| `zoom` \| `slide` \| `carousel` \| `wipe` — between clips |
 | `motion` | `none` \| `zoom` \| `pan` — slow Ken-Burns move on the clips |
-| `text_overlays[]` | `{ text, position, color, uppercase, background, animation, font (bold_sans \| condensed \| serif \| handwritten \| rounded), size, outline }` |
+| `text_overlays[]` | `{ text, position, color, uppercase, background, animation, font_name (any Google Font, or ""), font (fallback category), size, outline }` |
 
 The prompt makes Claude **infer the vibe boldly** (gym → hard rock + fast cuts + bold text; "fast paced" → more cuts per minute; "romantic" → slower pace + soft music; "funny" → playful music, not rock/epic; christmas → christmas music + festive text) while staying **coherent and not over-styling** (no fades, filters, or slow-mo the user didn't ask for or imply). Every field has to point the same direction. If the request is genuinely undirected it asks one clarifying question and parks the job; the user's next text reply is routed back to that job and the matcher re-runs with the answer. The system prompt is cached on the Anthropic side (`cache_control: ephemeral`).
 
@@ -139,5 +139,5 @@ ESM/NodeNext rule: relative imports end in `.js` even though the source is `.ts`
 - Royalty-free music only — no famous/copyrighted tracks; the matcher names public-domain equivalents for themes. Tag-based matching is good for common cases, not perfect.
 - `speed` (slow-mo) applies to single-clip edits only (multi-clip trim math gets fiddly).
 - Source audio is all-or-nothing (muted, or kept and ducked to 0.3) — no per-clip audio control.
-- Overlay fonts are a 5-item palette (`bold_sans` / `condensed` / `serif` / `handwritten` / `rounded`, loaded via `@font-face`) — not arbitrary licensed fonts; a specific request ("literal Helvetica/Times") maps to the nearest one. Wider control would mean switching overlays to Shotstack's `text` asset with declared `timeline.fonts`.
+- Overlay fonts cover ~all of Google Fonts (by name, via the `@fontsource` CDN) plus a 5-category fallback — but not *proprietary* fonts (literal Helvetica, Arial, Times), which can't legally be hosted, so those map to the nearest open-license category. Wider per-glyph control (stroke widths, gradients, etc.) would mean switching overlays to Shotstack's `text` asset.
 - Heavy transcoding (e.g. 4K → 1080p) is CPU-bound on a single core, so very long source clips add latency; there's a 150MB input-size cap as a guard.

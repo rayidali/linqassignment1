@@ -94,7 +94,11 @@ export const TextOverlay = z.object({
   // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
   background: z.string(),
   animation: z.enum(OVERLAY_ANIMATION_IDS),
-  font: z.enum(OVERLAY_FONT_IDS),
+  // A specific open-license / Google Fonts family name (e.g. "Bebas Neue"), or
+  // "" to just use the `font` category. Resolved via @fontsource at render;
+  // falls back to `font` then a bold-sans stack if the name doesn't resolve.
+  font_name: z.string().max(50),
+  font: z.enum(OVERLAY_FONT_IDS), // fallback category (also used for vibe-only requests)
   size: z.enum(OVERLAY_SIZE_IDS),
   outline: z.enum(OVERLAY_OUTLINE_IDS),
 });
