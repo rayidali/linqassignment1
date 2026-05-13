@@ -17,6 +17,7 @@
   <img src="https://img.shields.io/badge/render-Shotstack-00C2A8" alt="Shotstack">
   <img src="https://img.shields.io/badge/deployed-Render-46E3B7?logo=render&logoColor=white" alt="Render">
   <img src="https://img.shields.io/badge/status-live-brightgreen" alt="Live">
+  <a href="https://iedit.dev"><img src="https://img.shields.io/badge/website-iedit.dev-1976D2" alt="iedit.dev"></a>
 </p>
 
 <p align="center">
@@ -365,3 +366,7 @@ no rate limits.
   cap as a guard.
 * Demo runs on Shotstack's free `stage` env until `SHOTSTACK_ENV=v1` is set.
   That env watermarks output and caps resolution at 1080p.
+
+## Contact
+
+Website: [iedit.dev](https://iedit.dev) · Email: [rayid@iedit.dev](mailto:rayid@iedit.dev)
