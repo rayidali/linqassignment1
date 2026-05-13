@@ -2,8 +2,8 @@ import { env } from "../env.js";
 import { logger } from "../logger.js";
 import { fetchWithTimeout } from "../http.js";
 
-// Sandbox env. Switch to "v1" for production.
-const SHOTSTACK_ENV = "stage";
+// "stage" (free sandbox, watermarked) or "v1" (production) — from the env.
+const SHOTSTACK_ENV = env.SHOTSTACK_ENV;
 
 function shotstackUrl(path: string): string {
   return `https://api.shotstack.io/${SHOTSTACK_ENV}/${path}`;

@@ -76,6 +76,16 @@ export type MotionId = (typeof MOTION_IDS)[number];
 export const OVERLAY_ANIMATION_IDS = ["none", "fade", "slide_up", "slide_down"] as const;
 export type OverlayAnimationId = (typeof OVERLAY_ANIMATION_IDS)[number];
 
+// Overlay typeface — a small palette (we can't host every licensed font, so
+// the matcher maps a request to the nearest of these). Each → a real CDN font.
+export const OVERLAY_FONT_IDS = ["bold_sans", "condensed", "serif", "handwritten", "rounded"] as const;
+export type OverlayFontId = (typeof OVERLAY_FONT_IDS)[number];
+export const OVERLAY_SIZE_IDS = ["small", "medium", "large"] as const;
+export type OverlaySizeId = (typeof OVERLAY_SIZE_IDS)[number];
+// Text outline: "none" = soft drop-shadow (default), "dark"/"light" = a stroke.
+export const OVERLAY_OUTLINE_IDS = ["none", "dark", "light"] as const;
+export type OverlayOutlineId = (typeof OVERLAY_OUTLINE_IDS)[number];
+
 export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
@@ -84,6 +94,9 @@ export const TextOverlay = z.object({
   // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
   background: z.string(),
   animation: z.enum(OVERLAY_ANIMATION_IDS),
+  font: z.enum(OVERLAY_FONT_IDS),
+  size: z.enum(OVERLAY_SIZE_IDS),
+  outline: z.enum(OVERLAY_OUTLINE_IDS),
 });
 export type TextOverlay = z.infer<typeof TextOverlay>;
 

@@ -1,4 +1,4 @@
-import type { EditPlan, StyleId, PaceId, TextOverlay, MusicSpec } from "../schemas.js";
+import type { EditPlan, StyleId, PaceId, TextOverlay, MusicSpec, OverlayFontId, OverlaySizeId } from "../schemas.js";
 
 // "Style presets" provide the rendering scaffold for each base style: the
 // overlay font size relative to the frame, and a fallback music spec used if
@@ -41,6 +41,19 @@ export const PACE_TO_CLIP_SECONDS: Record<PaceId, number> = {
   slow: 4.5,
   very_slow: 6.5,
 };
+
+// Overlay font palette — CDN-hosted display fonts (jsdelivr @fontsource WOFF2:
+// stable, Chrome-compatible). The HTML overlay @font-faces the chosen one;
+// Shotstack's renderer fetches it. If a URL ever 404s, the overlay just falls
+// back to the bold-sans stack — no breakage.
+const FONT_SPECS: Record<OverlayFontId, { family: string; weight: number; url: string }> = {
+  bold_sans: { family: "iEditBoldSans", weight: 800, url: "https://cdn.jsdelivr.net/npm/@fontsource/montserrat/files/montserrat-latin-800-normal.woff2" },
+  condensed: { family: "iEditCondensed", weight: 400, url: "https://cdn.jsdelivr.net/npm/@fontsource/anton/files/anton-latin-400-normal.woff2" },
+  serif: { family: "iEditSerif", weight: 700, url: "https://cdn.jsdelivr.net/npm/@fontsource/playfair-display/files/playfair-display-latin-700-normal.woff2" },
+  handwritten: { family: "iEditHand", weight: 400, url: "https://cdn.jsdelivr.net/npm/@fontsource/permanent-marker/files/permanent-marker-latin-400-normal.woff2" },
+  rounded: { family: "iEditRounded", weight: 700, url: "https://cdn.jsdelivr.net/npm/@fontsource/baloo-2/files/baloo-2-latin-700-normal.woff2" },
+};
+const FONT_SIZE_FACTOR: Record<OverlaySizeId, number> = { small: 0.72, medium: 1.0, large: 1.42 };
 
 // Loose Shotstack edit type. See https://shotstack.io/docs/api/
 export type ShotstackEdit = {
@@ -193,32 +206,32 @@ function overlayTrack(
   outputH: number,
   fontScale: number,
 ): ShotstackEdit["timeline"]["tracks"][number] {
-  const fontSize = Math.max(18, Math.round(Math.min(outputW, outputH) * fontScale));
   const boxW = Math.round(outputW * 0.92);
   const boxH = Math.round(outputH * 0.5);
+  const minSide = Math.min(outputW, outputH);
   // One overlay clip per overlay, sequenced (so they don't all stack at once).
   // Each shows for 2.5s, starting where the previous left off (capped to a safe window).
   let cursor = 0;
   return {
     clips: overlays.map((o) => {
       const color = sanitizeColor(o.color);
-      const bg =
-        o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
+      const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
+      const f = FONT_SPECS[o.font ?? "bold_sans"] ?? FONT_SPECS.bold_sans;
+      const fontSize = Math.max(16, Math.round(minSide * fontScale * (FONT_SIZE_FACTOR[o.size ?? "medium"] ?? 1)));
+      const stroke =
+        o.outline === "dark" ? `-webkit-text-stroke:0.07em #000;paint-order:stroke fill;` :
+        o.outline === "light" ? `-webkit-text-stroke:0.07em #fff;paint-order:stroke fill;` : ``;
       const css =
-        // Load a real display font (Montserrat ExtraBold) from a CDN — if
-        // Shotstack's HTML renderer fetches it, we get a clean modern bold;
-        // if not, it just falls back to the sans stack below (no breakage).
-        `@font-face{font-family:'iEditDisplay';font-weight:800;font-display:swap;` +
-        `src:url('https://cdn.jsdelivr.net/npm/@fontsource/montserrat/files/montserrat-latin-800-normal.woff2') format('woff2')}` +
+        `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
         `body{margin:0}` +
         `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-        `p{margin:0;max-width:100%;font-family:'iEditDisplay','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:800;` +
+        `p{margin:0;max-width:100%;font-family:'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif;font-weight:${f.weight};` +
         `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
         `word-wrap:break-word;overflow-wrap:break-word;` +
         (o.uppercase ? `text-transform:uppercase;` : ``) +
-        (bg
-          ? `background-color:${bg};border-radius:0.18em;padding:0.08em 0.42em;`
-          : `text-shadow:0 3px 14px rgba(0,0,0,0.75);`) +
+        stroke +
+        (bg ? `background-color:${bg};border-radius:0.18em;padding:0.08em 0.42em;` : ``) +
+        (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
         `}`;
       const start = Math.min(cursor, 8);
       cursor += 2.7; // slight gap between sequential overlays
@@ -265,7 +278,7 @@ export function buildEdit(
   );
 
   const overlays = safe
-    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const }))
+    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const, font: "bold_sans" as const, size: "medium" as const, outline: "none" as const }))
     : plan.text_overlays;
 
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];

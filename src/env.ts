@@ -21,6 +21,10 @@ const EnvSchema = z.object({
   // contact card so opted-in users can save us with a name.
   LINQ_NUMBER: optionalString(),
   SHOTSTACK_API_KEY: optionalString(),
+  // "stage" = free sandbox (watermarked, max 1080-short-side, rate-limited);
+  // "v1" = production (uses credits, no watermark, higher limits). Defaults to
+  // stage; flip to "v1" in the env once you've got Shotstack credits.
+  SHOTSTACK_ENV: z.enum(["stage", "v1"]).default("stage"),
   ANTHROPIC_API_KEY: optionalString(),
   R2_ACCOUNT_ID: optionalString(),
   R2_ACCESS_KEY_ID: optionalString(),
