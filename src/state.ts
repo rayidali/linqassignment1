@@ -105,6 +105,26 @@ function captionOf(payload: LinqWebhookPayload): string {
 // plan — used to tell whether a refinement actually changed anything (we can't
 // just JSON.stringify the raw objects: one side came from jsonb, which doesn't
 // preserve key order, so they'd "differ" even when semantically identical).
+// Re-builds the Shotstack edit from what's stored on the job and submits it
+// again — used both for a slow-render resubmit (same edit) and for a safe-mode
+// retry after a render failure (`safe: true` → plain montage, no fancy bits).
+// Returns the new renderId, or null if the job is missing what it needs.
+async function rebuildAndSubmitRender(
+  jobId: string,
+  result: Record<string, unknown>,
+  opts: { safe?: boolean } = {},
+): Promise<string | null> {
+  const plan = result.plan as EditPlan | undefined;
+  const clips = (result.clips as ClipDownload[] | undefined) ?? [];
+  const clipUrls = clips
+    .map((c) => c.r2PublicUrl)
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+  if (!plan || clipUrls.length === 0) return null;
+  const outputSize = result.outputSize as { width: number; height: number } | undefined;
+  const musicUrl = (result.musicUrl as string | undefined) ?? FALLBACK_MUSIC_URL;
+  return submitRender(jobId, buildEdit(plan, clipUrls, outputSize, musicUrl, opts));
+}
+
 function planFingerprint(p: EditPlan): string {
   return JSON.stringify({
     style: p.style,
@@ -337,12 +357,34 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         },
         "building Shotstack edit",
       );
-      const edit = buildEdit(plan, clipUrls, outputSize, musicUrl);
-      const renderId = await submitRender(job.id, edit);
-      return {
-        nextState: "submitted",
-        resultPatch: { renderId, renderSubmittedAt: Date.now(), nextPollAt: 0, musicUrl, musicSpec },
-      };
+      try {
+        const renderId = await submitRender(job.id, buildEdit(plan, clipUrls, outputSize, musicUrl));
+        return {
+          nextState: "submitted",
+          resultPatch: { renderId, renderSubmittedAt: Date.now(), nextPollAt: 0, musicUrl, musicSpec },
+        };
+      } catch (err) {
+        // Shotstack rejected the edit (likely a value it didn't like in an
+        // optional bit). Retry once with a stripped-down "safe" edit so the
+        // user still gets a video; if even that fails, let it bubble.
+        log.warn(
+          { jobId: job.id, err: err instanceof Error ? err.message : String(err) },
+          "render submit rejected, retrying in safe mode",
+        );
+        const safeRenderId = await rebuildAndSubmitRender(job.id, { ...result, musicUrl }, { safe: true });
+        if (!safeRenderId) throw err;
+        return {
+          nextState: "submitted",
+          resultPatch: {
+            renderId: safeRenderId,
+            renderResubmitted: true, // used our one retry
+            renderSubmittedAt: Date.now(),
+            nextPollAt: 0,
+            musicUrl,
+            musicSpec,
+          },
+        };
+      }
     }
 
     case "submitted": {
@@ -371,25 +413,17 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       }
 
       // One silent resubmit — the sandbox sometimes drops a render but a fresh
-      // submit goes straight through. Everything we need is still in `result`.
+      // submit goes straight through.
       if (ageMs > resubmitMs && !result.renderResubmitted) {
-        const plan = result.plan as EditPlan | undefined;
-        const clips = (result.clips as ClipDownload[] | undefined) ?? [];
-        const clipUrls = clips
-          .map((c) => c.r2PublicUrl)
-          .filter((u): u is string => typeof u === "string" && u.length > 0);
-        if (plan && clipUrls.length > 0) {
-          const outputSize = result.outputSize as { width: number; height: number } | undefined;
-          const musicUrl = (result.musicUrl as string | undefined) ?? FALLBACK_MUSIC_URL;
-          const edit = buildEdit(plan, clipUrls, outputSize, musicUrl);
-          const newRenderId = await submitRender(job.id, edit);
+        const newRenderId = await rebuildAndSubmitRender(job.id, result);
+        if (newRenderId) {
           log.warn({ jobId: job.id, oldRenderId: renderId, newRenderId, ageMs }, "render slow, resubmitted a fresh one");
           return {
             nextState: "submitted",
             resultPatch: { renderId: newRenderId, renderResubmitted: true, nextPollAt: now + POLL_INTERVAL_MS },
           };
         }
-        // Can't resubmit (missing data) — fall through and keep polling the original.
+        // Can't rebuild (missing data) — fall through and keep polling the original.
       }
 
       // Heads-up to the user once if it's running over the estimate.
@@ -407,6 +441,22 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         return { nextState: "rendered", resultPatch: { videoUrl: status.url } };
       }
       if (status.status === "failed") {
+        // Render errored — most likely a value Shotstack didn't like in one of
+        // the optional bits. Retry once with a stripped-down "safe" edit (plain
+        // montage + music + plain text) so the user still gets a video.
+        if (!result.renderResubmitted) {
+          const newRenderId = await rebuildAndSubmitRender(job.id, result, { safe: true });
+          if (newRenderId) {
+            log.warn(
+              { jobId: job.id, oldRenderId: renderId, newRenderId, renderError: status.error },
+              "render failed, retrying in safe mode",
+            );
+            return {
+              nextState: "submitted",
+              resultPatch: { renderId: newRenderId, renderResubmitted: true, nextPollAt: now + POLL_INTERVAL_MS },
+            };
+          }
+        }
         return { nextState: "failed", error: status.error };
       }
       return { nextState: "submitted", resultPatch: { nextPollAt: now + POLL_INTERVAL_MS } };

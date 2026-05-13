@@ -223,14 +223,19 @@ function overlayTrack(
 
 // Builds the Shotstack edit JSON from a mastermind EditPlan + the (already
 // normalized) clip URLs + the output dimensions + the resolved music URL.
+// `safe: true` strips everything that isn't long-proven (transitions beyond a
+// hard cut, clip motion effects, text backgrounds/animations) — a fallback
+// when a fancy edit gets rejected by Shotstack, so the user still gets a video.
 export function buildEdit(
   plan: EditPlan,
   clips: string[],
   outputSize: OutputSize | undefined,
   musicUrl: string,
+  opts: { safe?: boolean } = {},
 ): ShotstackEdit {
   const preset = STYLE_PRESETS[plan.style];
   const size = outputSize ?? { width: 1080, height: 1920 };
+  const safe = opts.safe === true;
 
   // Per-clip duration for the montage. With only 2 clips, hold a 2s floor so a
   // very_fast pace doesn't produce a sub-4s blink. (1 clip ignores this — it
@@ -240,9 +245,13 @@ export function buildEdit(
     clips.length <= 2 ? 2.0 : 0,
   );
 
+  const overlays = safe
+    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const }))
+    : plan.text_overlays;
+
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
-  if (plan.text_overlays.length > 0) {
-    tracks.push(overlayTrack(plan.text_overlays, size.width, size.height, preset.fontScale));
+  if (overlays.length > 0) {
+    tracks.push(overlayTrack(overlays, size.width, size.height, preset.fontScale));
   }
   tracks.push(
     videoTrack(clips, perClipSeconds, {
@@ -250,8 +259,8 @@ export function buildEdit(
       sourceVolume: 0.3, // when keeping original audio, duck it under the music
       filter: mapColorFilter(plan.color_filter),
       speed: mapSpeed(plan.speed),
-      transition: plan.transition,
-      motion: plan.motion,
+      transition: safe ? "cut" : plan.transition,
+      motion: safe ? "none" : plan.motion,
     }),
   );
 
