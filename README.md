@@ -86,6 +86,38 @@ Times), which map to the nearest open license match.
 | **Multi turn** | Refine a delivered edit by texting a tweak. It re-renders from the clips it already has and applies only what changed. |
 | **Edge cases** | Asks one clarifying question if a request is too vague. Friendly failure messages, never silent. Per sender and system wide rate limits. |
 
+## 🎬 Examples
+
+A few real edits from the demo number, paired with the texts that produced them.
+
+<table>
+  <tr>
+    <th width="50%">What I texted</th>
+    <th width="50%">What it sent back</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/example-nyc-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a short trip to new york', bold helvetica font, lofi jazz music"></td>
+    <td align="center">
+      <video src="assets/example-nyc-output.mp4" width="280" autoplay loop muted playsinline></video>
+      <br/><sub><i>lofi jazz, bold helvetica title up top</i></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/example-met-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a trip to the met museum', yellow font, ken burns push and pan, vintage look, soothing music"></td>
+    <td align="center">
+      <video src="assets/example-met-output.mp4" width="280" autoplay loop muted playsinline></video>
+      <br/><sub><i>vintage look, yellow title, soft ken burns push, soothing music</i></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/example-beach-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a trip to the beach' with country music and pans and pushes for transitions"></td>
+    <td align="center">
+      <video src="assets/example-beach-output.mp4" width="280" autoplay loop muted playsinline></video>
+      <br/><sub><i>country track, slide transitions with zoom pushes, small title</i></sub>
+    </td>
+  </tr>
+</table>
+
 ## 🧠 How it works
 
 ```mermaid
