@@ -359,22 +359,38 @@ const POSITION_Y_OFFSET: Record<NormalizedOverlay["position"], number> = {
   bottom: 0.30,
 };
 
-// Auto-shrinks a hero/subtitle font when the text is long, so an "A TRIP TO
-// NEW YORK"-style title doesn't wrap to 3 lines and dominate the frame. Only
-// applies when role's natural size is generous enough to wrap (hero/subtitle);
-// body/caption are already small. Curve is a soft step-down keyed to char
-// count so short titles keep their punch.
+// Auto-shrinks a font when the text is long, so wrapped titles / long body
+// text don't blow out their asset boxes. Role-aware thresholds: hero is the
+// largest natural size so it shrinks earliest, body and caption are already
+// smaller so they only shrink for genuinely long copy. Each role's curve is
+// tuned so the text stays on ≤ 1-2 lines on a 992px-wide asset for typical
+// condensed/bold fonts.
 function lengthShrink(role: OverlayRoleId, text: string): number {
-  if (role !== "hero" && role !== "subtitle") return 1;
   const n = text.trim().length;
-  // Tuned so a hero on a 992px-wide box stays on ≤ 2 lines for typical
-  // condensed/bold fonts. Subtitles also shrink a bit so a long tagline
-  // doesn't crowd the hero above it.
-  if (n <= 8) return 1;            // "MEXICO", "NO DAYS OFF" — full size
-  if (n <= 14) return 0.85;        // "TRIP TO NYC" — slight shrink
-  if (n <= 20) return 0.70;        // "A TRIP TO NEW YORK" — fits on 1-2 lines
-  if (n <= 30) return 0.58;
-  return 0.50;                     // truly long (>30 chars) — keep readable
+  if (role === "hero") {
+    if (n <= 8) return 1;            // "MEXICO", "NO DAYS OFF" — full size
+    if (n <= 14) return 0.85;        // "TRIP TO NYC" — slight shrink
+    if (n <= 20) return 0.70;        // "A TRIP TO NEW YORK" — fits on 1-2 lines
+    if (n <= 30) return 0.58;
+    return 0.50;                     // truly long (>30 chars) — keep readable
+  }
+  if (role === "subtitle") {
+    if (n <= 12) return 1;
+    if (n <= 22) return 0.88;
+    if (n <= 32) return 0.74;
+    return 0.62;
+  }
+  if (role === "body") {
+    // Body is already 0.55× hero — only shrink for genuinely long descriptions.
+    if (n <= 40) return 1;
+    if (n <= 70) return 0.85;
+    if (n <= 110) return 0.70;
+    return 0.60;
+  }
+  // caption (the smallest role)
+  if (n <= 50) return 1;
+  if (n <= 90) return 0.85;
+  return 0.72;
 }
 
 // Each rendered line is a fully independent Shotstack clip on its own track,
@@ -457,10 +473,17 @@ function layoutLines(
   });
 }
 
-// Builds the HTML asset (one line, one asset) for a single LineSpec. The
-// asset is a single <p> centered horizontally; vertical alignment is handled
-// by Shotstack's clip position+offset since the asset box height is tight to
-// the line height. No flex / no inner positioning math.
+// Builds the HTML asset (one line, one asset) for a single LineSpec.
+//
+// Vertical centering uses display:table / display:table-cell / vertical-align:
+// middle — the most universally-supported centering primitive (works in
+// every HTML renderer ever, including Shotstack's headless browser, where
+// flex column has been unreliable). If the text wraps within the asset
+// (rare — lengthShrink keeps most text on 1 line), the wrapped lines stay
+// vertically centered as a unit instead of overflowing the box.
+//
+// overflow:hidden on the body clips any pathological overflow as a final
+// safety net so a runaway wrap can't bleed into adjacent overlay zones.
 function buildLineAsset(spec: LineSpec, boxW: number): Record<string, unknown> {
   const o = spec.overlay;
   const color = sanitizeColor(o.color);
@@ -477,25 +500,23 @@ function buildLineAsset(spec: LineSpec, boxW: number): Record<string, unknown> {
   const faceCss =
     `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
     (nf ? nf.faceCss : ``);
-  // The asset box height = line-height + small padding. The <p> fills it,
-  // text-align:center horizontally; line-height equal to the asset height so
-  // the text sits at the asset's vertical center. We deliberately keep this
-  // CSS minimal — no flex, no absolute positioning, no transforms — because
-  // every layout primitive we've leaned on has had a Shotstack rendering
-  // failure mode. With a one-line asset, "the text is the box" is enough.
   const css =
     faceCss +
-    `html,body{margin:0;padding:0;width:100%;height:100%}` +
-    `p.line{margin:0;padding:0;width:100%;height:100%;` +
-    `text-align:center;` +
+    `html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden}` +
+    // display:table on the wrapper + display:table-cell + vertical-align:
+    // middle is the bulletproof vertical-centering primitive.
+    `.cell{display:table;width:100%;height:100%}` +
+    `.cell>.inner{display:table-cell;text-align:center;vertical-align:middle;padding:0 4%}` +
+    `.line{margin:0;padding:0;` +
     `font-family:${fontStack};font-weight:${f.weight};` +
-    `font-size:${spec.fontSize}px;line-height:${spec.assetHeightPx}px;color:${color};` +
+    `font-size:${spec.fontSize}px;line-height:${LINE_HEIGHT_RATIO};color:${color};` +
     caseRule +
     stroke +
-    (bg ? `background-color:${bg};border-radius:0.2em;` : ``) +
+    (bg ? `display:inline-block;background-color:${bg};border-radius:0.2em;padding:0.08em 0.42em;` : ``) +
     (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
     `}`;
-  const html = `<p class="line">${escapeHtml(o.text)}</p>`;
+  // Wrapper structure for table-cell centering.
+  const html = `<div class="cell"><div class="inner"><span class="line">${escapeHtml(o.text)}</span></div></div>`;
   return {
     type: "html",
     html,
