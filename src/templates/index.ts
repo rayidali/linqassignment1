@@ -220,20 +220,30 @@ function namedFontFace(rawName: string | undefined): { family: string; faceCss: 
   };
 }
 
+// How long the full video is, used as the "full duration" length when an
+// overlay's duration_seconds is null. Floor at the existing min so very short
+// edits still get a readable overlay.
+function videoDurationSeconds(clipCount: number, perClipS: number): number {
+  return Math.max(2.5, clipCount === 1 ? 12 : clipCount * perClipS);
+}
+
 function overlayTrack(
   overlays: TextOverlay[],
   outputW: number,
   outputH: number,
   fontScale: number,
+  videoSeconds: number,
 ): ShotstackEdit["timeline"]["tracks"][number] {
   const boxW = Math.round(outputW * 0.92);
   const boxH = Math.round(outputH * 0.5);
   const minSide = Math.min(outputW, outputH);
-  // One overlay clip per overlay, sequenced (so they don't all stack at once).
-  // Each shows for 2.5s, starting where the previous left off (capped to a safe window).
+  // Default per-overlay window when duration_seconds is null: hold for the
+  // full video on the first overlay; sequence subsequent overlays so they
+  // don't stack on top of each other.
   let cursor = 0;
+  const fullHold = Math.max(2.5, videoSeconds);
   return {
-    clips: overlays.map((o) => {
+    clips: overlays.map((o, idx) => {
       const color = sanitizeColor(o.color);
       const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
       const f = FONT_SPECS[o.font ?? "bold_sans"] ?? FONT_SPECS.bold_sans;
@@ -243,6 +253,9 @@ function overlayTrack(
         o.outline === "dark" ? `-webkit-text-stroke:0.07em #000;paint-order:stroke fill;` :
         o.outline === "light" ? `-webkit-text-stroke:0.07em #fff;paint-order:stroke fill;` : ``;
       const fontStack = `${nf ? `'${nf.family}',` : ""}'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif`;
+      const caseRule =
+        o.case_style === "uppercase" ? `text-transform:uppercase;` :
+        o.case_style === "lowercase" ? `text-transform:lowercase;` : ``;
       const css =
         `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
         (nf ? nf.faceCss : ``) +
@@ -251,13 +264,20 @@ function overlayTrack(
         `p{margin:0;max-width:100%;font-family:${fontStack};font-weight:${f.weight};` +
         `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
         `word-wrap:break-word;overflow-wrap:break-word;` +
-        (o.uppercase ? `text-transform:uppercase;` : ``) +
+        caseRule +
         stroke +
         (bg ? `background-color:${bg};border-radius:0.18em;padding:0.08em 0.42em;` : ``) +
         (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
         `}`;
-      const start = Math.min(cursor, 8);
-      cursor += 2.7; // slight gap between sequential overlays
+      // Duration: explicit number from the plan (clamped), or full video for
+      // the first overlay / a 2.7s sequenced window for subsequent ones.
+      const explicit = typeof o.duration_seconds === "number" && o.duration_seconds > 0;
+      const length = explicit
+        ? Math.min(60, Math.max(0.5, o.duration_seconds as number))
+        : (idx === 0 ? fullHold : 2.7);
+      // Start: when explicit, sequence after the previous; when full-hold, anchor at 0.
+      const start = explicit ? Math.min(cursor, Math.max(0, videoSeconds - 0.5)) : (idx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)));
+      cursor = start + length + 0.2; // small gap before the next overlay
       const anim = overlayAnimation(o.animation);
       return {
         asset: {
@@ -269,7 +289,7 @@ function overlayTrack(
         },
         position: o.position, // "top" | "center" | "bottom"
         start,
-        length: 2.5,
+        length,
         ...(anim ? { transition: anim } : {}),
       };
     }),
@@ -301,12 +321,22 @@ export function buildEdit(
   );
 
   const overlays = safe
-    ? plan.text_overlays.map((o) => ({ ...o, background: "none", animation: "none" as const, font_name: "", font: "bold_sans" as const, size: "medium" as const, outline: "none" as const }))
+    ? plan.text_overlays.map((o) => ({
+        ...o,
+        background: "none",
+        animation: "none" as const,
+        duration_seconds: null,
+        font_name: "",
+        font: "bold_sans" as const,
+        size: "medium" as const,
+        outline: "none" as const,
+      }))
     : plan.text_overlays;
 
+  const totalSeconds = videoDurationSeconds(clips.length, perClipSeconds);
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (overlays.length > 0) {
-    tracks.push(overlayTrack(overlays, size.width, size.height, preset.fontScale));
+    tracks.push(overlayTrack(overlays, size.width, size.height, preset.fontScale, totalSeconds));
   }
   tracks.push(
     videoTrack(clips, perClipSeconds, {

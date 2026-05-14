@@ -108,7 +108,7 @@ webhookRouter.post(
         });
         logger.info({ jobId: awaiting.id, chatId }, "routed clarification answer to awaiting job");
         res.status(200).json({ clarificationRoutedTo: awaiting.id });
-        void sendTextReply(chatId, "k one sec", `${awaiting.id}-clarify-ack`).catch(() => {});
+        void sendTextReply(chatId, "okay one sec bestie", `${awaiting.id}-clarify-ack`).catch(() => {});
         return;
       }
     }
@@ -140,7 +140,7 @@ webhookRouter.post(
       res.status(200).json({ jobId: job.id });
       // Instant acknowledgment for video jobs (the pipeline takes ~1-2 min).
       if (jobType === "video" && job.state === "received") {
-        void sendTextReply(chatId, "got it, lemme look at this", `${job.id}-ack`).catch(() => {});
+        void sendTextReply(chatId, "ooh ok lemme see what i can do with this", `${job.id}-ack`).catch(() => {});
       }
       return;
     } catch (err) {

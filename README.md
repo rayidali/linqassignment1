@@ -42,16 +42,16 @@ below to try it on your own clips.
 ## 📱 Try it on your iPhone
 
 <p align="center">
-  <a href="sms:+16504687059">
-    <img alt="Try it here" src="assets/imessage-button.svg" width="220">
+  <a href='sms:+16504687059?body=hi'>
+    <img alt='Text "hi" to try' src="assets/imessage-button.svg" width="260">
   </a>
   <br/><br/>
   <img src="assets/imessage-qr.svg" width="160" alt="Scan to text iEdit">
   <br/>
-  <sub>Tap the button on iPhone or Mac to open Messages to <b>+1 (650) 468-7059</b>. On desktop, scan the QR with your phone. (Demo line, may rotate.)</sub>
+  <sub>Tap the button on iPhone or Mac to open Messages to <b>+1 (650) 468-7059</b> with <code>hi</code> already typed in. On desktop, scan the QR with your phone. (Demo line, may rotate.)</sub>
 </p>
 
-1. Text anything to start the chat.
+1. Send the prefilled <code>hi</code> to start the chat (or text anything).
 2. It replies asking you to reply `OK` to opt in (one time). You get a quick
    rundown plus an "Add to Contacts" card.
 3. Send one or more video clips and photos in a single message, with a caption

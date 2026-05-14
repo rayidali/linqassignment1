@@ -49,8 +49,8 @@ async function claimOneJob(): Promise<JobRow | null> {
 async function notifyVideoFailure(job: JobRow, errorMsg: string): Promise<void> {
   if (job.type !== "video" || !job.chatId) return;
   const friendly = /no editable|no media/i.test(errorMsg)
-    ? "i can only edit videos and photos rn, send me one of those"
-    : "ah that one broke on me, mind trying again? lmk if it keeps happening";
+    ? "aw bb i can only do videos and pics rn, hit me with one of those"
+    : "ugh that one broke on me, try again bestie? lmk if it keeps happening and ill fix it";
   await sendTextReply(job.chatId, friendly, `${job.id}-fail`).catch((e) => {
     logger.warn(
       { jobId: job.id, err: e instanceof Error ? e.message : String(e) },

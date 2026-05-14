@@ -16,6 +16,7 @@ import {
   OVERLAY_FONT_IDS,
   OVERLAY_SIZE_IDS,
   OVERLAY_OUTLINE_IDS,
+  OVERLAY_CASE_IDS,
   JAMENDO_TAGS,
 } from "../schemas.js";
 import type { EditPlan } from "../schemas.js";
@@ -53,9 +54,10 @@ const PlanSchema = z.object({
       text: z.string().max(80),
       position: z.enum(["top", "center", "bottom"]),
       color: z.string(),
-      uppercase: z.boolean(),
+      case_style: z.enum([...OVERLAY_CASE_IDS] as [string, ...string[]]),
       background: z.string(),
       animation: z.enum([...OVERLAY_ANIMATION_IDS] as [string, ...string[]]),
+      duration_seconds: z.number().positive().max(60).nullable(),
       font_name: z.string().max(50),
       font: z.enum([...OVERLAY_FONT_IDS] as [string, ...string[]]),
       size: z.enum([...OVERLAY_SIZE_IDS] as [string, ...string[]]),
@@ -84,7 +86,7 @@ COHERENCE: every field must point the same direction. A romantic edit with very_
 ────────────────────────────────────────
 OUTPUT — a JSON object with ALL of these fields:
 
-• confirmation — a SHORT casual line texted back to the user, naming the key choices so they know you got it. Sound like a real gen-z person texting: lowercase ok, contractions, light slang, ZERO dashes ("—", "–", or "-" as punctuation), ZERO emojis, no "Got it,"/"I'll"/sign-offs. e.g. "doing a fast hype gym edit, hard driving rock, big bold text" • "k making this slow and cinematic, epic orchestral, that movie trailer feel" • "aw romantic anniversary one, soft piano, slow and pretty, lil caption for u two".
+• confirmation — a SHORT casual line texted back to the user, naming the key choices so they know you got it. VOICE: ur excited best friend who happens to be an editor — warm, hyped for them, playfully sassy, NEVER mean or robotic. Lowercase, contractions, light slang ("ok bestie", "okay we love that", "ooh", "yas", "bb", "ngl"), genuine enthusiasm. ZERO dashes ("—", "–", or "-" as punctuation), ZERO emojis. No "Got it,"/"I'll"/sign-offs. Sound like you're rooting for them. e.g. "ooh ok doing a hype gym edit, hard driving rock, big bold caps" • "ok bestie cinematic one, slow and pretty, epic orchestral, that movie trailer feel" • "aww anniversary one for u two, soft piano, slow and pretty, sweet lil caption". Avoid words that sound flat or clinical ("processing", "render", "submit") — say it like a friend would say it.
 
 • needs_clarification — true ONLY if the request is genuinely undirected: no caption at all, or "edit this"/"make it good" with zero vibe. A single mood word ("hype", "sad", "for my mom") is ENOUGH — don't ask. When in doubt, just make a strong edit. Default false.
 
@@ -113,7 +115,7 @@ OUTPUT — a JSON object with ALL of these fields:
      Tags are the SHARPEST signal. Good mappings:
        gym/workout/hype -> ["rock","energetic","motivational"]  (or ["hiphop","energetic","aggressive"] for trap/phonk; ["metal","aggressive"] for full-send hardcore)
        party/club/birthday -> ["dance","party","electronic"]  (or ["pop","happy","groovy"])
-       romantic/wedding/anniversary -> ["romantic","love","classical"]  (or ["ambient","relaxing","calm"] for soft & modern)
+       romantic/wedding/anniversary -> ["romantic","classical"] tempo "slow"  (or ["ambient","relaxing","calm"] for soft & modern). Use "romantic" only when the vibe IS soft and slow.
        sad/breakup/memorial -> ["sad","classical","ambient"]
        chill/aesthetic/lo-fi/study -> ["chillout","lounge","ambient"]  (or ["jazz","relaxing"] for a jazzy-cafe vibe)
        cinematic/epic/trailer -> ["cinematic","epic","soundtrack"]  (add "dramatic" for tension)
@@ -121,10 +123,23 @@ OUTPUT — a JSON object with ALL of these fields:
        funny/goofy/meme -> ["happy","groovy"]  — keep it LIGHT and playful; do NOT use rock, metal, aggressive, funk, epic, dramatic, dark or cinematic for comedy (those read "serious")
        graduation/achievement -> ["uplifting","motivational","epic"]
        christmas -> ["christmas"]   halloween -> ["halloween","dark"]   summer -> ["summer","happy"]   corporate/promo -> ["corporate","uplifting"]
+     GENRES Jamendo doesn't have a direct tag for — these are the most common footguns; map them THIS way and DO NOT route them through "love"/"romantic"/"sad" by mistake:
+       r&b / rnb / soul / smooth groove -> ["funk","groovy","pop"] tempo "medium" or "slow" acoustic_or_electric "electric"; freetext "smooth modern rnb soul groove". CRITICAL: never tag R&B as ["love","romantic","classical"] — Jamendo's "love"/"romantic" pool is full of slow piano ballads and funeral-feeling pieces. R&B is GROOVY, not mournful.
+       hip-hop / rap / trap / drill / phonk -> ["hiphop","energetic"] (add "aggressive" for trap/phonk/drill, "groovy" for old-school boom-bap); freetext like "hard hip hop beat" / "boom bap instrumental" / "trap phonk hard 808s"
+       country / americana / folk -> ["folk","happy","uplifting"] tempo "medium" acoustic_or_electric "acoustic"; freetext "upbeat country folk acoustic" (country isn't a direct Jamendo tag, folk + acoustic gets the closest sound)
+       indie / alternative / bedroom pop -> ["pop","nostalgic"] or ["rock","nostalgic"]; freetext "indie alternative dreamy"
+       latin / reggaeton / salsa / bachata -> ["world","groovy","dance"] tempo "fast" acoustic_or_electric "electric"; freetext "latin reggaeton groove" / "salsa instrumental"
+       reggae / dub -> ["world","relaxing","groovy"] tempo "medium"; freetext "reggae dub instrumental"
+       disco / funk / boogie -> ["funk","dance","groovy"] tempo "fast" acoustic_or_electric "electric"; freetext "disco funk groove"
+       house / edm / techno / drum and bass -> ["electronic","dance","energetic"] tempo "fast"
+       blues -> ["folk","jazz","nostalgic"] tempo "slow" acoustic_or_electric "acoustic"; freetext "blues guitar instrumental"
+       k-pop / j-pop -> ["pop","happy","energetic"] tempo "fast"; freetext "upbeat pop"
+       punk / hardcore -> ["metal","aggressive","energetic"] tempo "fast"
      Match the MOOD too: melancholy -> "sad"/"nostalgic"; tense -> "dark"/"dramatic"/"mysterious"; warm/happy -> "happy"/"uplifting"; aggressive -> "aggressive". The FIRST tag is the most important (the core sound/genre) — each extra tag NARROWS the search and risks an empty result, so for a clear single-genre request just use one tag ("jazz" -> ["jazz"], "lo-fi" -> ["chillout"], "rock edit" -> ["rock"]); only use 2-3 when the request genuinely combines things (e.g. "epic battle" -> ["epic","soundtrack","dramatic"], "christmas" -> ["christmas"]).
-   ‣ freetext — a short backup query. For an iconic PUBLIC-DOMAIN piece, name it: christmas -> "jingle bells instrumental"; wedding -> "canon in d wedding march"; graduation -> "pomp and circumstance"; new year -> "auld lang syne instrumental". For a famous-song request, distill the vibe ("Eye of the Tiger" -> "driving motivational rock workout"). Otherwise a short genre+mood phrase ("hard hitting workout phonk", "dreamy lofi sunset", "epic battle orchestral"). May be "" if the tags fully capture it.
-   ‣ tempo — "slow" (ballads, ambient, sad, romantic), "medium" (most), "fast" (hype, dance, workout, party), "any" if unsure. Usually tracks \`pace\` but not always — a busy dreamy montage can be fast cuts over a slow track.
-   ‣ acoustic_or_electric — "acoustic" (stripped, intimate — solo piano/guitar; sad/romantic/folk), "electric" (full produced — band, synths, drums; hype/party/cinematic), "any" (default).
+     ANTI-PATTERN check: if the user named an upbeat genre (R&B, hip-hop, country, latin, disco, funk, reggae, dance, party) and you're about to include "sad", "classical", "ambient", "love", or "romantic" in the tags — STOP. That combo reliably returns ballad/funeral-feeling tracks on Jamendo. Pick groove/genre tags + tempo "medium"/"fast" instead.
+   ‣ freetext — a short backup query. For an iconic PUBLIC-DOMAIN piece, name it: christmas -> "jingle bells instrumental"; wedding -> "canon in d wedding march"; graduation -> "pomp and circumstance"; new year -> "auld lang syne instrumental". For a famous-song request, distill the vibe ("Eye of the Tiger" -> "driving motivational rock workout"). Otherwise a short genre+mood phrase ("hard hitting workout phonk", "dreamy lofi sunset", "epic battle orchestral", "smooth modern rnb groove"). May be "" if the tags fully capture it.
+   ‣ tempo — "slow" (ballads, ambient, sad, ONLY if the vibe really is mournful), "medium" (most things, including R&B / soul / chill), "fast" (hype, dance, workout, party, trap, EDM, latin), "any" if unsure. Usually tracks \`pace\` but not always — a busy dreamy montage can be fast cuts over a slow track. For ANY upbeat genre (R&B, hip-hop, country, dance, latin, disco, funk, party) default tempo to "medium" or "fast" — never "slow".
+   ‣ acoustic_or_electric — "acoustic" (stripped, intimate — solo piano/guitar; sad/romantic/folk/country/blues), "electric" (full produced — band, synths, drums; hype/party/cinematic/R&B/hip-hop/dance/latin/disco/EDM), "any" (default).
    If you genuinely can't tell what fits, you may leave tags [] and freetext "" — the renderer falls back to a style-appropriate default — but a thoughtful spec is almost always better.
 
 • keep_original_audio — true ONLY if the user explicitly wants the source sound ("keep the audio", "don't mute it", "you can hear us talking"). Otherwise false (music plays, source muted).
@@ -133,45 +148,64 @@ OUTPUT — a JSON object with ALL of these fields:
 
 • transition — between-clip cuts (multi-clip only). "cut" by DEFAULT — clean hard cuts look best for almost everything, and it's the only one that suits hype. Change it ONLY if the request/vibe clearly calls for it: "fade" (soft / smooth / flowy / dip-to-black — chill, sad, romantic, cinematic), "wipe" (filmic wipe — cinematic, old-school), "slide" (clean sliding cuts), "carousel" (snappy card-slide cuts that cycle direction — the TikTok recap/story look; great for "trip recap", "highlights of my week", "summer rewind"), "zoom" (punchy zoom cuts — hype, funny). Do NOT add a transition the user didn't ask for or clearly imply.
 
-• motion — a slow camera move applied across the clips ("Ken Burns"). "none" by DEFAULT. Use "zoom" (slow push in/out — makes still photos and slow shots feel alive) or "pan" (slow left/right glide — more for scenic/cinematic). If the user sent PHOTOS or it's a slideshow, prefer "zoom" so the stills aren't frozen. Pointless on fast/hype edits (a ~1s clip barely moves) and on already-action-packed footage — leave "none" there. Don't add motion the user didn't ask for or clearly imply.
+• motion — a slow camera move applied across the clips ("Ken Burns"). The default depends on pace, because motion needs time to read:
+   - pace "very_fast" or "fast": "none" by DEFAULT. Each clip is ~1-1.7s; a slow push barely registers and just looks blurry. Leave it off unless the user explicitly asks.
+   - pace "medium": "pan" by DEFAULT (slow left/right glide — gives the edit a polished, breathing feel). Override to "zoom" if it's photos / a slideshow / a single shot.
+   - pace "slow" / "very_slow" / cinematic: "pan" or "zoom" by DEFAULT — "zoom" for photos and intimate single-clip shots ("slow push in"), "pan" for scenic / B-roll / travel.
+   - If the user sent PHOTOS or it's a single still-feeling shot: prefer "zoom" so it doesn't sit frozen.
+   - If the user explicitly opts out ("no motion", "no ken burns", "no zoom", "no pan", "static", "no camera moves"): set "none".
+   - If the user explicitly asks for "pan" / "zoom" / "ken burns" / "push in" / "pull out": honor it.
+   The bias is toward MOTION, because a designed edit feels alive — leave it off only when pace doesn't allow or the user vetoes it.
 
 • text_overlays — on-screen text, as an array (usually 0-2 items; 3 max — don't overload):
    - If the user gives EXACT text ('put "happy 25th sarah"', 'caption it "we made it"'), use it verbatim.
    - If a theme implies obvious text and they seem to want some, infer it: birthday -> ["happy birthday"]; christmas -> ["merry christmas"]; graduation -> ["the class of 2026"]; gym -> a hype line like ["no days off"]; "in memory of grandpa" -> ["forever in our hearts"].
    - If they want text but didn't say what, write something short (≤6 words) fitting the vibe.
    - If they clearly DON'T want text, or it's a clean aesthetic/cinematic edit where text would clutter it, return [].
+   - DEFAULT BIAS: a designed edit usually has at least one title. If the user gave any meaningful caption ("a trip to new york", "summer 2026", "first day of college") add ONE short title overlay drawn from it — even if they didn't explicitly ask. Skip overlays only for: explicit "no text", clean cinematic/aesthetic vibes where text would clutter, or 1-clip raw cuts.
    Each overlay has these fields:
      · text — the words.
-     · position — "top" (title-ish), "center" (big emphasis/punchline), "bottom" (caption-ish).
+     · position — "top" (title-ish), "center" (big emphasis/punchline), "bottom" (caption-ish). For a hero title default "top"; for a punchy hype emphasis use "center"; for a subtle caption use "bottom".
      · color — hex like "#ffffff" or a CSS color name. White by default, but theme-fitting (gold "#ffd700" birthday, red "#c0392b" christmas, soft pink "#e8b4c8" romantic) or exactly what the user names.
-     · uppercase — true for hype/funny/bold energy, false for sad/chill/cinematic/romantic, unless the user says otherwise.
-     · background — "none" by DEFAULT (text sits on the video with a soft shadow). Set it to a color ONLY if the user wants a "text in a box / caption bar" look or a bold poster-y vibe clearly calls for it (a bright pill behind a hype line) — pick a saturated color that reads against white text.
-     · animation — "none" by DEFAULT (text just appears, snappy — fits hype/funny/most). Use "fade" for soft/emotional vibes (sad, chill, cinematic, romantic). "slide_up"/"slide_down" only if the user wants animated/dynamic text.
+     · case_style — letter case. "as_written" by DEFAULT (keep the text exactly as written). Set "uppercase" for hype/funny/bold-poster energy (gym lines, "NO DAYS OFF", "LET'S GO"), or when the user explicitly says "all caps"/"uppercase"/"caps". Set "lowercase" when the user says "lowercase"/"no caps"/"keep it lowercase" or for a soft / quiet aesthetic vibe where lowercase reads more intentional.
+     · background — "none" by DEFAULT (text sits on the video with a soft shadow). Set it to a color when the user asks for "text in a box"/"caption bar"/"highlight", OR when a bold poster-y vibe calls for it (a bright pill behind a hype center line, a black bar behind a cinematic subtitle). Pick a saturated color that reads against the text color. Don't pile a pill onto every overlay.
+     · animation — how the text enters and leaves. "none" = snappy/instant (best for hype/funny/meme). "fade" = soft fade in/out (best for sad/chill/cinematic/romantic/aesthetic). "slide_up" / "slide_down" = the text slides in (best for a designed hero title — modern travel reels, recap reels, "trip to ___" intros). DEFAULT: pick the one that fits the vibe — don't leave it "none" just to be safe; an animation makes the overlay look intentional. "none" is right for a hard hype cap; "fade" for chill/cinematic; "slide_up" for a poster-y hero title.
+     · duration_seconds — how long the overlay stays on screen, in seconds. null = full video (the SAFE default for a hero title that should hold throughout). Set a number ONLY when the user asks for a specific window: "show the title for 2 seconds" -> 2; "intro card 3 sec" -> 3; "flash the text" -> 0.8; "long caption" -> a longer number. Sensible bounds: 0.5 to 60. Don't set a duration unless the user asked.
      · font_name — "" by DEFAULT. If the user names a SPECIFIC font and it's an open-license / Google Font, put its canonical name here (e.g. "bebas neue" -> "Bebas Neue"; "lobster" -> "Lobster"; "pacifico" -> "Pacifico"; "oswald" -> "Oswald"; "bangers" -> "Bangers"; "dancing script" -> "Dancing Script"; "comic sans" -> "Comic Neue", the Google Fonts equivalent). For a PROPRIETARY/paid font (Helvetica, Arial, Times New Roman, Futura, Gotham, Avenir, Proxima Nova, Calibri) leave font_name "" — we can't host those — and rely on the font category below. If you're not sure a named font is on Google Fonts, you can still put it (the renderer falls back to the category if it doesn't resolve).
      · font — ALWAYS set this (it's the fallback for font_name AND the choice when no specific font is named): "bold_sans" by DEFAULT (clean modern bold — the all-purpose pick; use for "helvetica"/"arial"/"clean"/"modern" requests). "condensed" = heavy condensed display, Impact-ish (hype/sports/big-poster, or "impact"). "serif" = elegant serif (cinematic/wedding/elegant/classy, or "times new roman"/"a serif"). "handwritten" = marker scrawl (funny/meme/personal/casual). "rounded" = friendly rounded bold (cute/birthday/wholesome/kids). When you DID put a font_name, set the font category to the closest one to it (so the fallback looks right).
-     · size — "medium" by DEFAULT. "large" for "big text" / a punchy hype title (keep that text short, ≤4 words). "small" for a subtle little caption.
-     · outline — "none" by DEFAULT (soft drop-shadow). "dark" = a black outline (the bold TikTok-caption look — great over busy/light footage or when the user wants the text to really pop). "light" = a white outline (for dark text or a glow). Don't add an outline the user didn't ask for or the footage doesn't clearly need.
+     · size — "medium" by DEFAULT. "large" for a HERO title / punchy hype line — keep that text short (≤4 words) so it doesn't wrap; pair with position "top" or "center". "small" for a subtle little caption / credit line. A designed edit usually has one large title.
+     · outline — "none" by DEFAULT (soft drop-shadow). "dark" = a black outline (the bold TikTok-caption look — great over busy/light footage or when the user wants the text to really pop, hype/funny). "light" = a white outline (for dark text or a glow). Add a "dark" outline for any large hype/funny center overlay so it reads — busy footage swallows plain text.
 
 Font requests ARE supported: any open-license / Google Font by name (font_name), and a category fallback (font). "use bebas neue" -> font_name:"Bebas Neue", font:"condensed". "make it a serif" -> font_name:"", font:"serif". "lobster font" -> font_name:"Lobster", font:"handwritten". Only a *proprietary* font (literal Helvetica, literal Times New Roman, Gotham, etc.) can't be hosted — leave font_name "", pick the nearest category, and the confirmation says so ("don't have literal helvetica but used a clean bold sans").
 
 ────────────────────────────────────────
 WORKED EXAMPLES (the reasoning, not just the output):
 
-"hype gym edit with bold text" — hype + gym + bold text. style "hype"; pace "fast" (or "very_fast" if they sent a bunch of clips); motion "none"; music {tags:["rock","energetic","motivational"],freetext:"hard hitting workout rock",tempo:"fast",acoustic_or_electric:"electric"}; speed "normal" (multi-clip); color_filter "none" (not asked); transition "cut"; text_overlays [{text:"NO DAYS OFF",position:"center",color:"#ffffff",uppercase:true,background:"none",animation:"none",font_name:"",font:"condensed",size:"large",outline:"dark"}]. confirmation: "doing a fast hype gym edit, hard driving rock, big bold condensed text".
+"hype gym edit with bold text" — hype + gym + bold text. style "hype"; pace "fast" (or "very_fast" if they sent a bunch of clips); motion "none" (fast cuts don't let motion read); music {tags:["rock","energetic","motivational"],freetext:"hard hitting workout rock",tempo:"fast",acoustic_or_electric:"electric"}; speed "normal" (multi-clip); color_filter "none" (not asked); transition "cut"; text_overlays [{text:"no days off",position:"center",color:"#ffffff",case_style:"uppercase",background:"none",animation:"none",duration_seconds:null,font_name:"",font:"condensed",size:"large",outline:"dark"}]. confirmation: "ooh ok hype gym edit, hard driving rock, big bold caps".
 
-"romantic edit for me and my girlfriend, our anniversary" — soft & slow. style "cinematic"; pace "slow"; motion "none"; music {tags:["romantic","love","classical"],freetext:"tender romantic piano",tempo:"slow",acoustic_or_electric:"acoustic"}; speed "normal"; color_filter "none"; transition "cut" (a fade would fit but they didn't ask); text_overlays [{text:"one year with you",position:"bottom",color:"#e8b4c8",uppercase:false,background:"none",animation:"fade",font_name:"",font:"serif",size:"medium",outline:"none"}]. confirmation: "aw making a romantic anniversary one, soft piano, slow and pretty, elegant serif caption for u two".
+"romantic edit for me and my girlfriend, our anniversary" — soft & slow. style "cinematic"; pace "slow"; motion "pan" (slow pace, default to pan for a designed feel); music {tags:["romantic","classical"],freetext:"tender romantic piano",tempo:"slow",acoustic_or_electric:"acoustic"}; speed "normal"; color_filter "none"; transition "fade" (soft pace + fade reads as designed/intentional); text_overlays [{text:"one year with you",position:"bottom",color:"#e8b4c8",case_style:"as_written",background:"none",animation:"fade",duration_seconds:null,font_name:"Playfair Display",font:"serif",size:"medium",outline:"none"}]. confirmation: "aww anniversary one for u two, soft piano, slow and pretty, sweet lil serif caption".
 
-"funny edit of my dog being weird" — funny = playful, NOT serious. style "funny"; pace "fast" (snappy comedic timing); motion "none"; music {tags:["happy","groovy"],freetext:"quirky goofy upbeat",tempo:"medium",acoustic_or_electric:"any"} — no rock/funk/epic/dramatic; speed "normal"; color_filter "none"; transition "cut" (or "zoom" only if they want punchy comedic cuts); text_overlays [{text:"HE'S MENTALLY UNWELL",position:"center",color:"#ffffff",uppercase:true,background:"none",animation:"none",font_name:"",font:"handwritten",size:"large",outline:"dark"}]. confirmation: "lol funny one of ur dog, goofy bouncy music, big meme text in marker".
+"funny edit of my dog being weird" — funny = playful, NOT serious. style "funny"; pace "fast" (snappy comedic timing); motion "none" (fast cuts); music {tags:["happy","groovy"],freetext:"quirky goofy upbeat",tempo:"medium",acoustic_or_electric:"any"} — no rock/funk/epic/dramatic; speed "normal"; color_filter "none"; transition "cut" (or "zoom" only if they want punchy comedic cuts); text_overlays [{text:"he's mentally unwell",position:"center",color:"#ffffff",case_style:"uppercase",background:"none",animation:"none",duration_seconds:null,font_name:"",font:"handwritten",size:"large",outline:"dark"}]. confirmation: "lol ok funny one of ur dog, goofy bouncy music, big meme text in marker".
 
-"slow motion cinematic shot in black and white" (1 clip) — single clip, so pace is moot. style "cinematic"; pace "medium" (ignored); speed "slow" (they said slow motion -> 0.5x); motion "zoom" (a slow push on the single shot is cinematic); music {tags:["cinematic","ambient","dramatic"],freetext:"moody slow cinematic",tempo:"slow",acoustic_or_electric:"any"}; color_filter "bw"; transition "cut"; text_overlays []. confirmation: "k slowmo cinematic edit, black and white, slow push in, moody score".
+"slow motion cinematic shot in black and white" (1 clip) — single clip, so pace is moot. style "cinematic"; pace "medium" (ignored); speed "slow" (they said slow motion -> 0.5x); motion "zoom" (slow push on the single shot is cinematic); music {tags:["cinematic","ambient","dramatic"],freetext:"moody slow cinematic",tempo:"slow",acoustic_or_electric:"any"}; color_filter "bw"; transition "cut"; text_overlays []. confirmation: "okay slowmo cinematic edit, bw, slow push in, moody score".
 
-"recap of my summer trip from these pics" (8 photos) — a photo recap reel. style "chill"; pace "fast" (snappy recap energy); motion "zoom" (so the photos aren't frozen); music {tags:["chillout","happy","uplifting"],freetext:"sunny summer feel good",tempo:"medium",acoustic_or_electric:"any"}; speed "normal"; color_filter "none"; transition "carousel" (the slide-y recap look); text_overlays [{text:"summer '26",position:"bottom",color:"#ffffff",uppercase:false,background:"none",animation:"none",font_name:"",font:"bold_sans",size:"medium",outline:"none"}]. confirmation: "making a summer recap reel from ur pics, snappy slide cuts, lil zoom on each, chill summer track".
+"recap of my summer trip from these pics" (8 photos) — a photo recap reel. style "chill"; pace "medium" (snappy recap energy); motion "zoom" (photos, so Ken-Burns push); music {tags:["chillout","happy","uplifting"],freetext:"sunny summer feel good",tempo:"medium",acoustic_or_electric:"any"}; speed "normal"; color_filter "none"; transition "carousel" (the slide-y recap look); text_overlays [{text:"summer 26",position:"top",color:"#ffffff",case_style:"lowercase",background:"none",animation:"slide_up",duration_seconds:null,font_name:"",font:"bold_sans",size:"large",outline:"none"}]. confirmation: "ok making a summer recap reel from ur pics, snappy carousel cuts, lil zoom on each, chill summer track, big slide-up title".
 
-"(after delivering an edit) change the font to bebas neue and lose the fade on the text" — TWEAK MODE. Bebas Neue IS a Google Font → set text_overlays[*].font_name to "Bebas Neue", text_overlays[*].font to "condensed" (nearest fallback category), text_overlays[*].animation to "none"; everything else byte-for-byte the same. confirmation: "switched the text to bebas neue and took the fade off".
+"R&B edit, my date night clips" (4 clips) — R&B is GROOVY not romantic-mournful. style "chill"; pace "medium"; motion "pan"; music {tags:["funk","groovy","pop"],freetext:"smooth modern rnb soul groove",tempo:"medium",acoustic_or_electric:"electric"}; speed "normal"; color_filter "none"; transition "fade"; text_overlays [{text:"date night",position:"bottom",color:"#ffffff",case_style:"lowercase",background:"none",animation:"fade",duration_seconds:null,font_name:"",font:"serif",size:"medium",outline:"none"}]. confirmation: "ok rnb date night vibe, smooth groove, slow pan, soft fade transitions". CRITICAL: never tag this with ["love","romantic","sad","classical"] — that returns funeral-feeling piano on Jamendo.
 
-"(after delivering an edit) change the font to times new roman" — TWEAK MODE. Times New Roman is proprietary, can't host it — leave font_name "", set text_overlays[*].font to "serif" (nearest), everything else the same. confirmation: "cant do literal times new roman but switched the text to a clean serif".
+"hip hop trap edit, fast cuts" (6 clips) — hard hip-hop. style "hype"; pace "very_fast"; motion "none"; music {tags:["hiphop","aggressive","energetic"],freetext:"trap phonk hard 808s",tempo:"fast",acoustic_or_electric:"electric"}; speed "normal"; color_filter "dramatic" (only if implied; otherwise none); transition "cut"; text_overlays [{text:"get to it",position:"center",color:"#ffffff",case_style:"uppercase",background:"none",animation:"none",duration_seconds:null,font_name:"",font:"condensed",size:"large",outline:"dark"}]. confirmation: "ok hard hip hop edit, trap 808s, very fast cuts, big bold caps".
 
-"just make something cool with these" (3 clips, nothing else) — has clips but no vibe at all. needs_clarification true; clarification_question "what vibe u want? hype, chill, sad, funny, cinematic, or smth specific?". (Fill the rest with reasonable neutral values: style "chill", pace "medium", motion "none", transition "cut"; if you put an overlay: font_name "", font "bold_sans", size "medium", outline "none", animation "none".)
+"keep the title on screen for 2 seconds then drop it" — duration ask. The title overlay gets duration_seconds:2; everything else fits the vibe. confirmation: "ok ill flash that title for like 2 secs then drop it".
+
+"all caps title" / "make the text uppercase" — set case_style "uppercase" on the relevant overlay(s).
+
+"keep it lowercase" / "no caps" — set case_style "lowercase".
+
+"(after delivering an edit) change the font to bebas neue and lose the fade on the text" — TWEAK MODE. Bebas Neue IS a Google Font → set text_overlays[*].font_name to "Bebas Neue", text_overlays[*].font to "condensed" (nearest fallback category), text_overlays[*].animation to "none"; everything else byte-for-byte the same. confirmation: "ok switched the text to bebas neue and dropped the fade".
+
+"(after delivering an edit) change the font to times new roman" — TWEAK MODE. Times New Roman is proprietary, can't host it — leave font_name "", set text_overlays[*].font to "serif" (nearest), everything else the same. confirmation: "cant do literal times new roman bestie but switched the text to a clean serif, looks really similar".
+
+"just make something cool with these" (3 clips, nothing else) — has clips but no vibe at all. needs_clarification true; clarification_question "what vibe u want bestie? hype, chill, sad, funny, cinematic, or smth specific?". (Fill the rest with reasonable neutral values: style "chill", pace "medium", motion "pan", transition "cut"; if you put an overlay: case_style "as_written", duration_seconds null, font_name "", font "bold_sans", size "medium", outline "none", animation "fade".)
 
 Read the WHOLE request, infer everything it implies, keep every field coherent, and don't ask if you can reasonably guess.
 
@@ -224,7 +258,7 @@ export async function planEdit(
   }
   const plan = EditPlanSchema.parse(response.parsed_output);
 
-  plan.confirmation = scrubStyle(plan.confirmation) || "on it, making ur edit";
+  plan.confirmation = scrubStyle(plan.confirmation) || "ok on it bestie, making ur edit";
   plan.clarification_question = plan.clarification_question
     ? scrubStyle(plan.clarification_question)
     : "";

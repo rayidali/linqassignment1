@@ -63,6 +63,25 @@ async function fetchTrack(u: string): Promise<JamendoTrack | null> {
   return (await fetchTracks(u))[0] ?? null;
 }
 
+// Defensive name filter for obviously mournful tracks. The matcher's prompt
+// now maps R&B / hip-hop / country / latin / disco etc. to groove tags
+// (`funk`/`groovy`/`hiphop`/etc.) and never to `love`/`romantic`/`sad`, but if
+// it slips and we end up querying Jamendo's "popular" pool with mood-leaning
+// tags, the candidate list can still surface tracks literally titled "Funeral
+// March", "Requiem", etc. Strip those unless the spec is explicitly sad
+// (`tags` includes `sad`, or freetext mentions a death-y word — in which case
+// the user actually wants this and we keep them in the pool).
+const MOURNFUL_NAME = /funeral|requiem|elegy|dirge|mournful|weeping|funerale/i;
+const SPEC_SAYS_SAD = /sad|funeral|memorial|mourning|elegy|requiem|grief|in memoriam|tribute|farewell/i;
+function isSadSpec(spec: MusicSpec): boolean {
+  if (spec.tags.includes("sad")) return true;
+  return SPEC_SAYS_SAD.test(spec.freetext);
+}
+function filterTracks(spec: MusicSpec, tracks: JamendoTrack[]): JamendoTrack[] {
+  if (isSadSpec(spec)) return tracks;
+  return tracks.filter((t) => !(t.name && MOURNFUL_NAME.test(t.name)));
+}
+
 function pickOne(tracks: JamendoTrack[]): JamendoTrack | null {
   if (tracks.length === 0) return null;
   return tracks[Math.floor(Math.random() * tracks.length)] ?? tracks[0] ?? null;
@@ -113,7 +132,8 @@ async function findTrack(spec: MusicSpec): Promise<JamendoTrack | null> {
   if (search) queries.push({ search }); // last resort: Jamendo's loose name search
 
   for (const q of queries) {
-    const t = pickOne(await fetchTracks(buildUrl(q, CANDIDATE_POOL)));
+    const pool = filterTracks(spec, await fetchTracks(buildUrl(q, CANDIDATE_POOL)));
+    const t = pickOne(pool);
     if (t) return t;
   }
   return null;

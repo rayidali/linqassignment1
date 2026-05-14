@@ -41,17 +41,24 @@ export async function submitRender(jobId: string, edit: unknown): Promise<string
   return data.response.id;
 }
 
+// In-progress Shotstack states (between submit and done). Used by the state
+// machine to drive accurate user-facing progress messages — `fetching` ≈ 25 %,
+// `rendering` ≈ 50 %, `saving` ≈ 75 %. These are the only ground-truth signals
+// Shotstack exposes; there's no ETA or numeric progress field on the API.
+export const SHOTSTACK_PROGRESS_STAGES = ["queued", "fetching", "rendering", "saving"] as const;
+export type ShotstackProgressStage = (typeof SHOTSTACK_PROGRESS_STAGES)[number];
+
 export type ShotstackStatus =
-  | { status: "queued" | "fetching" | "rendering" | "saving" }
-  | { status: "done"; url: string }
-  | { status: "failed"; error: string };
+  | { status: ShotstackProgressStage; created?: string; updated?: string }
+  | { status: "done"; url: string; created?: string; updated?: string }
+  | { status: "failed"; error: string; created?: string; updated?: string };
 
 export async function pollRender(jobId: string, renderId: string): Promise<ShotstackStatus> {
   const res = await fetchWithTimeout(shotstackUrl(`render/${renderId}`), {
     headers: { "x-api-key": env.SHOTSTACK_API_KEY ?? "" },
   });
   const data = (await res.json().catch(() => null)) as
-    | { response?: { status?: string; url?: string; error?: string } }
+    | { response?: { status?: string; url?: string; error?: string; created?: string; updated?: string } }
     | null;
 
   if (!res.ok || !data?.response?.status) {
@@ -60,16 +67,18 @@ export async function pollRender(jobId: string, renderId: string): Promise<Shots
     );
   }
   const status = data.response.status;
-  logger.info({ jobId, renderId, shotstackStatus: status }, "polled Shotstack");
+  const created = data.response.created;
+  const updated = data.response.updated;
+  logger.info({ jobId, renderId, shotstackStatus: status, created, updated }, "polled Shotstack");
 
   if (status === "done") {
     if (!data.response.url) {
       throw new Error("Shotstack render done but no URL in response");
     }
-    return { status: "done", url: data.response.url };
+    return { status: "done", url: data.response.url, created, updated };
   }
   if (status === "failed") {
-    return { status: "failed", error: data.response.error ?? "unknown" };
+    return { status: "failed", error: data.response.error ?? "unknown", created, updated };
   }
-  return { status: status as "queued" | "fetching" | "rendering" | "saving" };
+  return { status: status as ShotstackProgressStage, created, updated };
 }

@@ -85,15 +85,24 @@ export type OverlaySizeId = (typeof OVERLAY_SIZE_IDS)[number];
 // Text outline: "none" = soft drop-shadow (default), "dark"/"light" = a stroke.
 export const OVERLAY_OUTLINE_IDS = ["none", "dark", "light"] as const;
 export type OverlayOutlineId = (typeof OVERLAY_OUTLINE_IDS)[number];
+// Letter case applied at render. "as_written" leaves the matcher's text alone.
+export const OVERLAY_CASE_IDS = ["as_written", "uppercase", "lowercase"] as const;
+export type OverlayCaseId = (typeof OVERLAY_CASE_IDS)[number];
 
 export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
   color: z.string(), // hex like "#ffffff" or a CSS color name; sanitized at render
-  uppercase: z.boolean(),
+  // Letter case: "as_written" keeps the text as typed; "uppercase"/"lowercase"
+  // force it. User can ask: "make the text all caps", "lowercase title", etc.
+  case_style: z.enum(OVERLAY_CASE_IDS),
   // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
   background: z.string(),
   animation: z.enum(OVERLAY_ANIMATION_IDS),
+  // How long the overlay stays on screen, in seconds. null = full video.
+  // Use a number when the user asks for a specific window ("show the title for
+  // 2 seconds", "intro card 3 sec"). 0 < n ≤ 60.
+  duration_seconds: z.number().positive().max(60).nullable(),
   // A specific open-license / Google Fonts family name (e.g. "Bebas Neue"), or
   // "" to just use the `font` category. Resolved via @fontsource at render;
   // falls back to `font` then a bold-sans stack if the name doesn't resolve.

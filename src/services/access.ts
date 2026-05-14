@@ -13,27 +13,28 @@ const OPT_IN_WORDS = new Set([
 
 const MSG = {
   optInPrompt:
-    `yo this is iEdit, an AI video editor demo. u send video clips or pics + a caption like "hype gym edit" ` +
-    `and i text back a short edited video with music, text, transitions, the works. reply OK to start`,
+    `hii this is iEdit, an AI video editor demo. u send me video clips or pics + a caption like "hype gym edit" ` +
+    `and i text u back a short edited video with music, text, transitions, the works. reply OK and lets get into it`,
   welcome:
-    `u good. quick rundown on iEdit:\n\n` +
-    `im an AI video editor. send me video clips and or photos (1 or more, any mix) with a caption of the vibe u want, ` +
-    `and i text u back a finished short edit with music, text overlays, color, transitions, all of it.\n\n` +
-    `captions that work great:\n` +
+    `okay we love that. quick rundown on what i do:\n\n` +
+    `im ur AI video editor bestie. send me video clips and or photos (1 or more, any mix) with a caption of the vibe u want, ` +
+    `and i send u back a finished short edit with music, text overlays, color, transitions, all of it.\n\n` +
+    `captions that go off:\n` +
     `hype gym edit with big bold text\n` +
     `chill summer recap, slow mo and cinematic\n` +
-    `make it sad with emotional piano\n` +
+    `sad emotional piano edit\n` +
     `christmas edit (i grab festive music + festive text)\n` +
-    `funny edit of my dog\n\n` +
+    `funny edit of my dog\n` +
+    `rnb date night vibe with smooth music\n\n` +
     `stuff i can do: pick a style (hype, sad, chill, funny, cinematic), match music to the mood, ` +
-    `add text overlays, slow mo, color filters (vibrant, black and white, dramatic), transitions between clips\n\n` +
-    `what happens after u send: i say "got it" right away, then i tell u what im making + a rough wait, ` +
-    `then a couple mins later the video lands. if ur caption is too vague to nail it ill ask u one quick question first.\n\n` +
-    `u can also just text me normally anytime (hows my video, what styles do u have, etc).\n\n` +
-    `whenever ur ready, send some clips + a caption`,
-  perMinute: "hold up lemme finish the last one, hit me again in a min",
-  perDay: `u maxed out today (${DAILY_VIDEO_LIMIT_PER_SENDER} edits). hit me up tomorrow`,
-  systemBudget: "the demo's at capacity for today, try again tomorrow",
+    `add text overlays (any google font, all caps or lowercase, set how long it shows), slow mo, color filters (vibrant, bw, dramatic), transitions between clips, slow ken burns moves\n\n` +
+    `the flow: i text u "got it" right away, then i tell u what im making + a rough wait, ` +
+    `then i drop progress updates as i go (25, 50, 75 percent), then the finished video lands. if ur caption is too vague ill ask u one quick question.\n\n` +
+    `u can also just text me normally anytime (hows my video, what styles can u do, etc) or tweak a delivered edit ("make the text yellow", "different music", "use bebas neue").\n\n` +
+    `okay whenever ur ready hit me with some clips + a caption bestie`,
+  perMinute: "hold up bb im still finishing the last one, hit me again in a min",
+  perDay: `u maxed out for today (${DAILY_VIDEO_LIMIT_PER_SENDER} edits). hmu tomorrow bestie`,
+  systemBudget: "the demo's at capacity for today bb, try me again tomorrow",
 };
 
 export type AccessResult = { allow: true } | { allow: false; reason: string };
