@@ -103,21 +103,21 @@ A few real edits from the demo number, paired with the texts that produced them.
   <tr>
     <td align="center"><img src="assets/example-nyc-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a short trip to new york', bold helvetica font, lofi jazz music"></td>
     <td align="center">
-      <video src="https://github.com/user-attachments/assets/ca593141-2cfa-4d71-a2f5-291ebc9ebcd8" width="280" autoplay loop muted playsinline></video>
+      <video src="https://github.com/user-attachments/assets/db28f0d8-7f3b-4bea-a14b-7ae2a7cdbe0f" width="280" autoplay loop muted playsinline></video>
       <br/><sub><i>lofi jazz, bold helvetica title up top</i></sub>
     </td>
   </tr>
   <tr>
     <td align="center"><img src="assets/example-met-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a trip to the met museum', yellow font, ken burns push and pan, vintage look, soothing music"></td>
     <td align="center">
-      <video src="https://github.com/user-attachments/assets/bd09111c-100c-4f2a-b0e9-3f08d664591e" width="280" autoplay loop muted playsinline></video>
+      <video src="https://github.com/user-attachments/assets/af80ca0e-c101-4a63-b114-1170ce12d3e1" width="280" autoplay loop muted playsinline></video>
       <br/><sub><i>vintage look, yellow title, soft ken burns push, soothing music</i></sub>
     </td>
   </tr>
   <tr>
     <td align="center"><img src="assets/example-beach-prompt.png" width="280" alt="iMessage asking iEdit for an edit titled 'a trip to the beach' with country music and pans and pushes for transitions"></td>
     <td align="center">
-      <video src="https://github.com/user-attachments/assets/b0922243-0ec9-4e01-9555-f674b2819b88" width="280" autoplay loop muted playsinline></video>
+      <video src="https://github.com/user-attachments/assets/70c81410-0d75-4c32-b619-e6a76096280e" width="280" autoplay loop muted playsinline></video>
       <br/><sub><i>country track, slide transitions with zoom pushes, small title</i></sub>
     </td>
   </tr>
