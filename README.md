@@ -41,15 +41,19 @@ below to try it on your own clips.
 
 ## 📱 Try it on your iPhone
 
-<p align="center">
-  <a href='sms:+16504687059?body=hi'>
-    <img alt='Text "hi" to try' src="assets/imessage-button.svg" width="260">
-  </a>
-  <br/><br/>
-  <img src="assets/imessage-qr.svg" width="160" alt="Scan to text iEdit">
-  <br/>
-  <sub>Tap the button on iPhone or Mac to open Messages to <b>+1 (650) 468-7059</b> with <code>hi</code> already typed in. On desktop, scan the QR with your phone. (Demo line, may rotate.)</sub>
-</p>
+<div align="center">
+
+<a href="sms:+16504687059?body=hi"><img alt='Text "hi" to try' src="assets/imessage-button.svg" width="300"/></a>
+
+<br/>
+
+<img src="assets/imessage-qr.svg" width="140" alt="Scan to text iEdit"/>
+
+<br/>
+
+<sub>Tap on iPhone or Mac to open Messages to <b>+1&nbsp;(650)&nbsp;468&#8209;7059</b> with <code>hi</code> already typed. On desktop, scan the QR with your phone. <i>(Demo line, may rotate.)</i></sub>
+
+</div>
 
 1. Send the prefilled <code>hi</code> to start the chat (or text anything).
 2. It replies asking you to reply `OK` to opt in (one time). You get a quick

@@ -327,22 +327,37 @@ function migrateOverlay(raw: unknown): NormalizedOverlay {
   };
 }
 
-// Groups consecutive overlays at the SAME position into stacks. A stack
-// renders as a single HTML asset (hero + subtitle composed as a designed
-// unit). Position changes break the group: hero@top followed by caption@bottom
-// becomes two separate groups.
+// Groups overlays by position into stacks (hero + subtitle at the same
+// position render as one designed HTML block). Grouping is GLOBAL, not just
+// consecutive — if the matcher slips and emits [hero@top, body@bottom,
+// subtitle@top], we still merge the two top-position items into one stack
+// instead of producing two clips that render at the same screen zone and
+// visually overlap. Order within each group preserves the matcher's order
+// (hero first → it owns the group's transitions).
 function groupByPosition(overlays: NormalizedOverlay[]): NormalizedOverlay[][] {
-  const groups: NormalizedOverlay[][] = [];
+  const buckets = new Map<NormalizedOverlay["position"], NormalizedOverlay[]>();
+  // Insertion order on Map preserves first-seen order across positions, so
+  // groups come out in the order the matcher introduced each zone.
   for (const o of overlays) {
-    const last = groups[groups.length - 1];
-    if (last && last[0]!.position === o.position) {
-      last.push(o);
-    } else {
-      groups.push([o]);
-    }
+    const arr = buckets.get(o.position) ?? [];
+    arr.push(o);
+    buckets.set(o.position, arr);
   }
-  return groups;
+  return Array.from(buckets.values());
 }
+
+// Each logical position maps to an explicit y-offset on a center-anchored box.
+// This guarantees the three zones (top / center / bottom) sit at distinct
+// vertical centers regardless of box height, so wrapped or stacked content
+// in one zone can't bleed into another. Text centers land at:
+//   top    → 0.20 × frameH (≈ y=384 on a 1920-tall frame)
+//   center → 0.50 × frameH (≈ y=960)
+//   bottom → 0.80 × frameH (≈ y=1536)
+const POSITION_Y_OFFSET: Record<NormalizedOverlay["position"], number> = {
+  top: -0.30,
+  center: 0,
+  bottom: 0.30,
+};
 
 // Builds the per-line CSS for one overlay inside a stacked group. The class
 // name is line-N so each line can carry its own font, size, color, case,
@@ -389,7 +404,10 @@ function overlayTrack(
   videoSeconds: number,
 ): ShotstackEdit["timeline"]["tracks"][number] {
   const boxW = Math.round(outputW * 0.92);
-  const boxH = Math.round(outputH * 0.55);
+  // Box height is generous enough to fit a wrapped hero+subtitle stack but
+  // not so big that a single zone visually owns the whole frame. Combined
+  // with the per-zone y-offset below, each zone has a clear vertical home.
+  const boxH = Math.round(outputH * 0.45);
   const minSide = Math.min(outputW, outputH);
   const fullHold = Math.max(2.5, videoSeconds);
   let cursor = 0;
@@ -420,9 +438,12 @@ function overlayTrack(
         // Flex column: vertically center the stack, horizontally center each line.
         // inline-block lines so pill backgrounds hug their text instead of going edge-to-edge.
         `.stack{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%;text-align:center}` +
-        `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.18;word-wrap:break-word;overflow-wrap:break-word}` +
-        // Small vertical gap between stacked lines, sized in em so it scales with the line's own font.
-        `.stack p + p{margin-top:0.18em}` +
+        `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word}` +
+        // Generous vertical breathing room between stacked lines (hero +
+        // subtitle reads as a designed pair, not a cramped pair). Sized in em
+        // of the second line so it scales with the smaller font and keeps
+        // proportionality across font sizes.
+        `.stack p + p{margin-top:0.45em}` +
         ruleCsses.join("");
       // Group's transition pair comes from the FIRST overlay (the hero, in a
       // hero+subtitle stack). The whole block enters/exits as one unit.
@@ -444,6 +465,12 @@ function overlayTrack(
         ? (gIdx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)))
         : Math.min(cursor, Math.max(0, videoSeconds - length));
       cursor = start + length + 0.2;
+      // Use Shotstack position="center" for every clip and shift each zone via
+      // an explicit y-offset. Anchoring boxes to frame edges (the previous
+      // approach) made adjacent zones overlap by hundreds of pixels even though
+      // text centers were apart — wrapped heroes bled across that overlap zone.
+      // Center-anchor + offset gives every zone a guaranteed vertical home.
+      const yOffset = POSITION_Y_OFFSET[head.position];
       return {
         asset: {
           type: "html",
@@ -452,7 +479,8 @@ function overlayTrack(
           width: boxW,
           height: boxH,
         },
-        position: head.position,
+        position: "center",
+        ...(yOffset !== 0 ? { offset: { x: 0, y: yOffset } } : {}),
         start,
         length,
         ...(transition ? { transition } : {}),

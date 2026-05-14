@@ -14,13 +14,16 @@
   </defs>
   <rect x="10" y="8" width="300" height="72" rx="36" ry="36" fill="url(#imsgBg)" filter="url(#imsgShadow)"/>
   <rect x="10" y="8" width="300" height="36" rx="36" ry="36" fill="url(#imsgHi)"/>
-  <g transform="translate(48, 44)" fill="#FFFFFF">
-    <rect x="-16" y="-13" width="32" height="22" rx="6"/>
-    <path d="M -11,8 L -16,15 L -3,8 Z"/>
+  <!-- Center icon + text as a unit at the pill's horizontal center (x=160). -->
+  <g transform="translate(160, 44)" fill="#FFFFFF">
+    <g transform="translate(-78, 0)">
+      <rect x="-16" y="-13" width="32" height="22" rx="6"/>
+      <path d="M -11,8 L -16,15 L -3,8 Z"/>
+    </g>
+    <text x="22" y="0"
+          font-family="system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+          font-size="22" font-weight="600" letter-spacing="0.2"
+          text-anchor="middle"
+          dominant-baseline="central">text &quot;hi&quot; to try</text>
   </g>
-  <text x="76" y="44"
-        font-family="system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
-        font-size="22" font-weight="600" letter-spacing="0.2"
-        fill="#FFFFFF"
-        dominant-baseline="central">text &quot;hi&quot; to try</text>
 </svg>
