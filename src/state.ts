@@ -6,7 +6,7 @@ import { submitRender, pollRender } from "./services/shotstack.js";
 import { resolveMusicUrl } from "./services/music.js";
 import { uploadAttachment, sendVideoReply, sendTextReply, startTyping } from "./services/linq.js";
 import { generateReply, classifyTweakRequest } from "./services/chat.js";
-import { buildEdit, STYLE_PRESETS, PACE_TO_CLIP_SECONDS } from "./templates/index.js";
+import { buildEdit, STYLE_PRESETS, PACE_TO_CLIP_SECONDS, overlayGroupCount } from "./templates/index.js";
 import type { LinqWebhookPayload, EditPlan } from "./schemas.js";
 
 // Used when Jamendo can't resolve a track — there's always a soundtrack.
@@ -96,7 +96,10 @@ const EST_PER_FILTER_S = 0.5;          // per clip when color_filter != none
 
 function estimateRenderMs(plan: EditPlan, clipCount: number): number {
   const outputSeconds = clipCount > 1 ? clipCount * PACE_TO_CLIP_SECONDS[plan.pace] : 12;
-  const overlays = plan.text_overlays?.length ?? 0;
+  // Count GROUPS, not raw overlays — the renderer composes consecutive
+  // same-position overlays into ONE HTML asset (a hero+subtitle stack is one
+  // render, not two). overlayGroupCount() handles old-shape plans too.
+  const overlayGroups = overlayGroupCount((plan.text_overlays as unknown[]) ?? []);
   const hasTransition = plan.transition && plan.transition !== "cut";
   const hasMotion = plan.motion && plan.motion !== "none";
   const hasFilter = plan.color_filter && plan.color_filter !== "none";
@@ -104,7 +107,7 @@ function estimateRenderMs(plan: EditPlan, clipCount: number): number {
     EST_BASELINE_S +
     outputSeconds * EST_PER_OUTPUT_S +
     clipCount * EST_PER_CLIP_S +
-    overlays * EST_PER_OVERLAY_S +
+    overlayGroups * EST_PER_OVERLAY_S +
     (hasTransition ? clipCount * EST_PER_TRANSITION_S : 0) +
     (hasMotion ? clipCount * EST_PER_MOTION_S : 0) +
     (hasFilter ? clipCount * EST_PER_FILTER_S : 0);
@@ -197,19 +200,29 @@ function planFingerprint(p: EditPlan): string {
       tempo: p.music?.tempo ?? "any",
       acoustic_or_electric: p.music?.acoustic_or_electric ?? "any",
     },
-    text_overlays: (p.text_overlays ?? []).map((o) => ({
-      text: o.text,
-      position: o.position,
-      color: o.color,
-      case_style: o.case_style ?? "as_written",
-      background: o.background ?? "none",
-      animation: o.animation ?? "none",
-      duration_seconds: o.duration_seconds ?? null,
-      font_name: o.font_name ?? "",
-      font: o.font ?? "bold_sans",
-      size: o.size ?? "medium",
-      outline: o.outline ?? "none",
-    })),
+    text_overlays: (p.text_overlays ?? []).map((o) => {
+      // Robust to old stored plans (uppercase boolean, single `animation`) and
+      // new ones — pull each field with its old-shape fallback so an unchanged
+      // old plan fingerprints identically before and after the schema bump.
+      const raw = o as unknown as Record<string, unknown>;
+      const oldAnim = typeof raw.animation === "string" ? (raw.animation as string) : undefined;
+      const caseFromOld = raw.uppercase === true ? "uppercase" : "as_written";
+      return {
+        text: o.text,
+        position: o.position,
+        color: o.color,
+        role: o.role ?? (o.size === "large" ? "hero" : o.size === "small" ? "caption" : "subtitle"),
+        case_style: o.case_style ?? caseFromOld,
+        background: o.background ?? "none",
+        animation_in: o.animation_in ?? oldAnim ?? "none",
+        animation_out: o.animation_out ?? oldAnim ?? "none",
+        duration_seconds: o.duration_seconds ?? null,
+        font_name: o.font_name ?? "",
+        font: o.font ?? "bold_sans",
+        size: o.size ?? "medium",
+        outline: o.outline ?? "none",
+      };
+    }),
   });
 }
 

@@ -71,10 +71,26 @@ export type TransitionId = (typeof TRANSITION_IDS)[number];
 export const MOTION_IDS = ["none", "zoom", "pan"] as const;
 export type MotionId = (typeof MOTION_IDS)[number];
 
-// How a text overlay enters/leaves. Default "none" (it just appears) — a
-// transition is only added when the vibe/request calls for it.
-export const OVERLAY_ANIMATION_IDS = ["none", "fade", "slide_up", "slide_down"] as const;
-export type OverlayAnimationId = (typeof OVERLAY_ANIMATION_IDS)[number];
+// Visual hierarchy role. Drives the FONT-SIZE multiplier on top of `size`;
+// also tells the renderer how to compose multi-line title blocks (a "hero"
+// with a "subtitle" at the same position get stacked as a unit). One hero
+// per edit is the norm.
+export const OVERLAY_ROLE_IDS = ["hero", "subtitle", "body", "caption"] as const;
+export type OverlayRoleId = (typeof OVERLAY_ROLE_IDS)[number];
+
+// How a text overlay enters and leaves. Supports the full Shotstack transition
+// vocabulary so the matcher can compose recap-reel choreography
+// (in: slide_up, out: carousel_left). Both fields are required; the matcher
+// sets them per overlay (and the renderer takes the first overlay's pair as
+// the group's transition when overlays are stacked).
+export const OVERLAY_TRANSITION_IDS = [
+  "none",
+  "fade",
+  "slide_up", "slide_down", "slide_left", "slide_right",
+  "carousel_up", "carousel_down", "carousel_left", "carousel_right",
+  "zoom",
+] as const;
+export type OverlayTransitionId = (typeof OVERLAY_TRANSITION_IDS)[number];
 
 // Overlay typeface — a small palette (we can't host every licensed font, so
 // the matcher maps a request to the nearest of these). Each → a real CDN font.
@@ -93,22 +109,34 @@ export const TextOverlay = z.object({
   text: z.string().max(80),
   position: z.enum(["top", "center", "bottom"]),
   color: z.string(), // hex like "#ffffff" or a CSS color name; sanitized at render
+  // Visual hierarchy. Drives a strong size multiplier (hero ~2.6×, subtitle 1×,
+  // body 0.55×, caption 0.4×) AND tells the renderer how to stack overlays:
+  // consecutive overlays at the same `position` are composed into one HTML
+  // block (hero + subtitle as a designed unit). Match a typographic role to
+  // the text's intent: one hero per edit, optional subtitle below it.
+  role: z.enum(OVERLAY_ROLE_IDS),
   // Letter case: "as_written" keeps the text as typed; "uppercase"/"lowercase"
   // force it. User can ask: "make the text all caps", "lowercase title", etc.
   case_style: z.enum(OVERLAY_CASE_IDS),
   // "none", or a hex/CSS color — when a color, the text sits on a rounded pill of that color.
   background: z.string(),
-  animation: z.enum(OVERLAY_ANIMATION_IDS),
+  // Entrance and exit transitions, set separately so the matcher can compose
+  // looks like (in: slide_up, out: carousel_left) — the recap-reel choreography.
+  // Within a stacked group the group as a whole inherits the FIRST overlay's
+  // pair (the hero's), since the whole block enters/exits together.
+  animation_in: z.enum(OVERLAY_TRANSITION_IDS),
+  animation_out: z.enum(OVERLAY_TRANSITION_IDS),
   // How long the overlay stays on screen, in seconds. null = full video.
   // Use a number when the user asks for a specific window ("show the title for
-  // 2 seconds", "intro card 3 sec"). 0 < n ≤ 60.
+  // 2 seconds", "intro card 3 sec"). 0 < n ≤ 60. Within a stacked group, null
+  // wins over any number (the group holds for the full video).
   duration_seconds: z.number().positive().max(60).nullable(),
   // A specific open-license / Google Fonts family name (e.g. "Bebas Neue"), or
   // "" to just use the `font` category. Resolved via @fontsource at render;
   // falls back to `font` then a bold-sans stack if the name doesn't resolve.
   font_name: z.string().max(50),
   font: z.enum(OVERLAY_FONT_IDS), // fallback category (also used for vibe-only requests)
-  size: z.enum(OVERLAY_SIZE_IDS),
+  size: z.enum(OVERLAY_SIZE_IDS), // fine-tune on top of role's multiplier
   outline: z.enum(OVERLAY_OUTLINE_IDS),
 });
 export type TextOverlay = z.infer<typeof TextOverlay>;

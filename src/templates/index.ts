@@ -1,4 +1,14 @@
-import type { EditPlan, StyleId, PaceId, TextOverlay, MusicSpec, OverlayFontId, OverlaySizeId } from "../schemas.js";
+import type {
+  EditPlan,
+  StyleId,
+  PaceId,
+  TextOverlay,
+  MusicSpec,
+  OverlayFontId,
+  OverlaySizeId,
+  OverlayRoleId,
+  OverlayTransitionId,
+} from "../schemas.js";
 
 // "Style presets" provide the rendering scaffold for each base style: the
 // overlay font size relative to the frame, and a fallback music spec used if
@@ -54,6 +64,15 @@ const FONT_SPECS: Record<OverlayFontId, { family: string; weight: number; url: s
   rounded: { family: "iEditRounded", weight: 700, url: "https://cdn.jsdelivr.net/npm/@fontsource/baloo-2/files/baloo-2-latin-700-normal.woff2" },
 };
 const FONT_SIZE_FACTOR: Record<OverlaySizeId, number> = { small: 0.72, medium: 1.0, large: 1.42 };
+// Role does most of the size work; `size` (small/medium/large above) fine-tunes
+// on top. A hero is ~6× the size of a caption, which is the visual ratio you
+// see in good template work — magazine title vs credit line.
+const ROLE_FACTOR: Record<OverlayRoleId, number> = {
+  hero: 2.6,
+  subtitle: 1.0,
+  body: 0.55,
+  caption: 0.4,
+};
 
 // Loose Shotstack edit type. See https://shotstack.io/docs/api/
 export type ShotstackEdit = {
@@ -191,12 +210,20 @@ function videoTrack(
   };
 }
 
-function overlayAnimation(a: TextOverlay["animation"] | undefined): { in?: string; out?: string } | undefined {
-  switch (a) {
-    case "fade": return { in: "fade", out: "fade" };
-    case "slide_up": return { in: "slideUp", out: "slideUp" };
-    case "slide_down": return { in: "slideDown", out: "slideDown" };
-    default: return undefined; // "none" (or unset, for plans made before this field existed) → no transition
+// Map our overlay-transition enum to Shotstack's native transition names.
+function mapTransition(t: OverlayTransitionId | undefined): string | undefined {
+  switch (t) {
+    case "fade": return "fade";
+    case "slide_up": return "slideUp";
+    case "slide_down": return "slideDown";
+    case "slide_left": return "slideLeft";
+    case "slide_right": return "slideRight";
+    case "carousel_up": return "carouselUp";
+    case "carousel_down": return "carouselDown";
+    case "carousel_left": return "carouselLeft";
+    case "carousel_right": return "carouselRight";
+    case "zoom": return "zoom";
+    default: return undefined; // "none" / unset → no transition object
   }
 }
 
@@ -227,80 +254,243 @@ function videoDurationSeconds(clipCount: number, perClipS: number): number {
   return Math.max(2.5, clipCount === 1 ? 12 : clipCount * perClipS);
 }
 
+// A normalized overlay shape: every field is filled in, no nulls except
+// duration_seconds. Used after migrateOverlay() so the renderer never has to
+// reach for `?? default` again.
+type NormalizedOverlay = {
+  text: string;
+  position: "top" | "center" | "bottom";
+  color: string;
+  role: OverlayRoleId;
+  case_style: "as_written" | "uppercase" | "lowercase";
+  background: string;
+  animation_in: OverlayTransitionId;
+  animation_out: OverlayTransitionId;
+  duration_seconds: number | null;
+  font_name: string;
+  font: OverlayFontId;
+  size: OverlaySizeId;
+  outline: "none" | "dark" | "light";
+};
+
+// Brings any overlay shape we might see at runtime into the current schema
+// shape. Three cases this guards against:
+//   1) the latest schema (everything present) — passes through
+//   2) the prior schema with `uppercase: boolean` + single `animation` —
+//      stored in jsonb on older Job rows + reused on refinement
+//   3) anything missing fields entirely — pre-1.0 leftovers
+// Defaults are picked so an old plan renders the same as it did before this
+// pass: role "subtitle" gives a 1× multiplier (matches the old default).
+function migrateOverlay(raw: unknown): NormalizedOverlay {
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const sizeRaw = (o.size as string | undefined) ?? "medium";
+  const size: OverlaySizeId = (sizeRaw === "small" || sizeRaw === "medium" || sizeRaw === "large") ? sizeRaw : "medium";
+  // For old plans with no `role`, derive from `size` so the visual size lands
+  // in roughly the same place: large→hero, medium→subtitle, small→caption.
+  const roleRaw = (o.role as string | undefined) ?? (size === "large" ? "hero" : size === "small" ? "caption" : "subtitle");
+  const role: OverlayRoleId = (roleRaw === "hero" || roleRaw === "subtitle" || roleRaw === "body" || roleRaw === "caption") ? roleRaw : "subtitle";
+  const positionRaw = (o.position as string | undefined) ?? "center";
+  const position: "top" | "center" | "bottom" = (positionRaw === "top" || positionRaw === "center" || positionRaw === "bottom") ? positionRaw : "center";
+  const fontRaw = (o.font as string | undefined) ?? "bold_sans";
+  const font: OverlayFontId = (["bold_sans", "condensed", "serif", "handwritten", "rounded"] as const).includes(fontRaw as OverlayFontId)
+    ? (fontRaw as OverlayFontId) : "bold_sans";
+  const outlineRaw = (o.outline as string | undefined) ?? "none";
+  const outline: "none" | "dark" | "light" = (outlineRaw === "none" || outlineRaw === "dark" || outlineRaw === "light") ? outlineRaw : "none";
+  // case_style: prefer the new field; fall back to the old `uppercase: boolean`.
+  const caseRaw = (o.case_style as string | undefined)
+    ?? (o.uppercase === true ? "uppercase" : "as_written");
+  const case_style: "as_written" | "uppercase" | "lowercase" = (caseRaw === "uppercase" || caseRaw === "lowercase" || caseRaw === "as_written") ? caseRaw : "as_written";
+  // animation_in/out: prefer the new fields; fall back to the old single `animation` for both sides.
+  const oldAnim = o.animation as string | undefined;
+  const inRaw = (o.animation_in as string | undefined) ?? oldAnim ?? "none";
+  const outRaw = (o.animation_out as string | undefined) ?? oldAnim ?? "none";
+  const validTransition = (t: string): OverlayTransitionId => {
+    const valid: OverlayTransitionId[] = ["none", "fade", "slide_up", "slide_down", "slide_left", "slide_right", "carousel_up", "carousel_down", "carousel_left", "carousel_right", "zoom"];
+    return (valid as string[]).includes(t) ? (t as OverlayTransitionId) : "none";
+  };
+  const ds = o.duration_seconds;
+  const duration_seconds = typeof ds === "number" && ds > 0 ? Math.min(60, Math.max(0.5, ds)) : null;
+  return {
+    text: typeof o.text === "string" ? o.text : "",
+    position,
+    color: typeof o.color === "string" ? o.color : "#ffffff",
+    role,
+    case_style,
+    background: typeof o.background === "string" ? o.background : "none",
+    animation_in: validTransition(inRaw),
+    animation_out: validTransition(outRaw),
+    duration_seconds,
+    font_name: typeof o.font_name === "string" ? o.font_name : "",
+    font,
+    size,
+    outline,
+  };
+}
+
+// Groups consecutive overlays at the SAME position into stacks. A stack
+// renders as a single HTML asset (hero + subtitle composed as a designed
+// unit). Position changes break the group: hero@top followed by caption@bottom
+// becomes two separate groups.
+function groupByPosition(overlays: NormalizedOverlay[]): NormalizedOverlay[][] {
+  const groups: NormalizedOverlay[][] = [];
+  for (const o of overlays) {
+    const last = groups[groups.length - 1];
+    if (last && last[0]!.position === o.position) {
+      last.push(o);
+    } else {
+      groups.push([o]);
+    }
+  }
+  return groups;
+}
+
+// Builds the per-line CSS for one overlay inside a stacked group. The class
+// name is line-N so each line can carry its own font, size, color, case,
+// outline, and pill background, all stacked inside one flex column.
+function lineCss(
+  o: NormalizedOverlay,
+  idx: number,
+  minSide: number,
+  fontScale: number,
+): { faceCss: string; ruleCss: string; fontStack: string } {
+  const color = sanitizeColor(o.color);
+  const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
+  const f = FONT_SPECS[o.font] ?? FONT_SPECS.bold_sans;
+  const nf = namedFontFace(o.font_name); // optional Google Font by name
+  const sizeFactor = FONT_SIZE_FACTOR[o.size] ?? 1;
+  const roleFactor = ROLE_FACTOR[o.role] ?? 1;
+  const fontSize = Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor));
+  const stroke =
+    o.outline === "dark" ? `-webkit-text-stroke:0.06em #000;paint-order:stroke fill;` :
+    o.outline === "light" ? `-webkit-text-stroke:0.06em #fff;paint-order:stroke fill;` : ``;
+  const fontStack = `${nf ? `'${nf.family}',` : ""}'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif`;
+  const caseRule =
+    o.case_style === "uppercase" ? `text-transform:uppercase;` :
+    o.case_style === "lowercase" ? `text-transform:lowercase;` : ``;
+  const faceCss =
+    `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
+    (nf ? nf.faceCss : ``);
+  const ruleCss =
+    `p.line-${idx}{font-family:${fontStack};font-weight:${f.weight};` +
+    `font-size:${fontSize}px;color:${color};` +
+    caseRule +
+    stroke +
+    (bg ? `background-color:${bg};border-radius:0.2em;padding:0.08em 0.42em;` : ``) +
+    (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
+    `}`;
+  return { faceCss, ruleCss, fontStack };
+}
+
 function overlayTrack(
-  overlays: TextOverlay[],
+  groups: NormalizedOverlay[][],
   outputW: number,
   outputH: number,
   fontScale: number,
   videoSeconds: number,
 ): ShotstackEdit["timeline"]["tracks"][number] {
   const boxW = Math.round(outputW * 0.92);
-  const boxH = Math.round(outputH * 0.5);
+  const boxH = Math.round(outputH * 0.55);
   const minSide = Math.min(outputW, outputH);
-  // Default per-overlay window when duration_seconds is null: hold for the
-  // full video on the first overlay; sequence subsequent overlays so they
-  // don't stack on top of each other.
-  let cursor = 0;
   const fullHold = Math.max(2.5, videoSeconds);
+  let cursor = 0;
   return {
-    clips: overlays.map((o, idx) => {
-      const color = sanitizeColor(o.color);
-      const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
-      const f = FONT_SPECS[o.font ?? "bold_sans"] ?? FONT_SPECS.bold_sans;
-      const nf = namedFontFace(o.font_name); // a specific Google Font, if the user asked for one
-      const fontSize = Math.max(16, Math.round(minSide * fontScale * (FONT_SIZE_FACTOR[o.size ?? "medium"] ?? 1)));
-      const stroke =
-        o.outline === "dark" ? `-webkit-text-stroke:0.07em #000;paint-order:stroke fill;` :
-        o.outline === "light" ? `-webkit-text-stroke:0.07em #fff;paint-order:stroke fill;` : ``;
-      const fontStack = `${nf ? `'${nf.family}',` : ""}'${f.family}','Arial Black','Helvetica Neue',Arial,'Liberation Sans',Helvetica,sans-serif`;
-      const caseRule =
-        o.case_style === "uppercase" ? `text-transform:uppercase;` :
-        o.case_style === "lowercase" ? `text-transform:lowercase;` : ``;
+    clips: groups.map((group, gIdx) => {
+      // Compose per-line CSS for the whole stack. @font-face declarations are
+      // deduped by family name so the same font isn't redeclared if multiple
+      // lines share it.
+      const seenFaces = new Set<string>();
+      const faceCsses: string[] = [];
+      const ruleCsses: string[] = [];
+      const linesHtml: string[] = [];
+      group.forEach((o, lineIdx) => {
+        const { faceCss, ruleCss } = lineCss(o, lineIdx, minSide, fontScale);
+        // Cheap dedupe: a face block starts with @font-face{font-family:'X';
+        // — bucket by that prefix.
+        const key = faceCss.slice(0, faceCss.indexOf("src:")); // family + weight + display, no src
+        if (!seenFaces.has(key)) {
+          seenFaces.add(key);
+          faceCsses.push(faceCss);
+        }
+        ruleCsses.push(ruleCss);
+        linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(o.text)}</p>`);
+      });
       const css =
-        `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
-        (nf ? nf.faceCss : ``) +
+        faceCsses.join("") +
         `body{margin:0}` +
-        `.wrap{display:flex;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%}` +
-        `p{margin:0;max-width:100%;font-family:${fontStack};font-weight:${f.weight};` +
-        `font-size:${fontSize}px;line-height:1.25;color:${color};text-align:center;` +
-        `word-wrap:break-word;overflow-wrap:break-word;` +
-        caseRule +
-        stroke +
-        (bg ? `background-color:${bg};border-radius:0.18em;padding:0.08em 0.42em;` : ``) +
-        (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
-        `}`;
-      // Duration: explicit number from the plan (clamped), or full video for
-      // the first overlay / a 2.7s sequenced window for subsequent ones.
-      const explicit = typeof o.duration_seconds === "number" && o.duration_seconds > 0;
-      const length = explicit
-        ? Math.min(60, Math.max(0.5, o.duration_seconds as number))
-        : (idx === 0 ? fullHold : 2.7);
-      // Start: when explicit, sequence after the previous; when full-hold, anchor at 0.
-      const start = explicit ? Math.min(cursor, Math.max(0, videoSeconds - 0.5)) : (idx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)));
-      cursor = start + length + 0.2; // small gap before the next overlay
-      const anim = overlayAnimation(o.animation);
+        // Flex column: vertically center the stack, horizontally center each line.
+        // inline-block lines so pill backgrounds hug their text instead of going edge-to-edge.
+        `.stack{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%;text-align:center}` +
+        `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.18;word-wrap:break-word;overflow-wrap:break-word}` +
+        // Small vertical gap between stacked lines, sized in em so it scales with the line's own font.
+        `.stack p + p{margin-top:0.18em}` +
+        ruleCsses.join("");
+      // Group's transition pair comes from the FIRST overlay (the hero, in a
+      // hero+subtitle stack). The whole block enters/exits as one unit.
+      const head = group[0]!;
+      const inName = mapTransition(head.animation_in);
+      const outName = mapTransition(head.animation_out);
+      const transition = inName || outName ? { ...(inName ? { in: inName } : {}), ...(outName ? { out: outName } : {}) } : undefined;
+      // Duration: explicit number wins, with null priority — if ANY overlay in
+      // the group says null, the group holds for the full video. Otherwise
+      // use the max of the explicit durations (so all lines have time to read).
+      const anyNull = group.some((o) => o.duration_seconds === null);
+      const explicitMax = group.reduce((m, o) => (typeof o.duration_seconds === "number" ? Math.max(m, o.duration_seconds) : m), 0);
+      const length = anyNull
+        ? fullHold
+        : Math.min(60, Math.max(0.5, explicitMax || 2.7));
+      // Start: full-hold groups anchor at 0; explicit-duration groups sequence
+      // after the previous group (so a 2s flash card doesn't sit at 0 forever).
+      const start = anyNull
+        ? (gIdx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)))
+        : Math.min(cursor, Math.max(0, videoSeconds - length));
+      cursor = start + length + 0.2;
       return {
         asset: {
           type: "html",
-          html: `<div class="wrap"><p>${escapeHtml(o.text)}</p></div>`,
+          html: `<div class="stack">${linesHtml.join("")}</div>`,
           css,
           width: boxW,
           height: boxH,
         },
-        position: o.position, // "top" | "center" | "bottom"
+        position: head.position,
         start,
         length,
-        ...(anim ? { transition: anim } : {}),
+        ...(transition ? { transition } : {}),
       };
     }),
+  };
+}
+
+// Exported for the estimator in state.ts so the render-time estimate counts
+// HTML asset renders (one per group), not raw overlay count. A hero+subtitle
+// pair is one HTML asset, not two.
+export function overlayGroupCount(rawOverlays: unknown[]): number {
+  if (!Array.isArray(rawOverlays) || rawOverlays.length === 0) return 0;
+  return groupByPosition(rawOverlays.map(migrateOverlay)).length;
+}
+
+// Safe-mode collapse for an overlay: drop the design flourishes that have
+// caused Shotstack render rejections in the past — pill backgrounds, fancy
+// transitions, named fonts, duration overrides. Keep the text, position,
+// color, role (so size hierarchy survives), case_style, and font category.
+function safeOverlay(o: NormalizedOverlay): NormalizedOverlay {
+  return {
+    ...o,
+    background: "none",
+    animation_in: "none",
+    animation_out: "none",
+    duration_seconds: null,
+    font_name: "",
+    outline: "none",
   };
 }
 
 // Builds the Shotstack edit JSON from a mastermind EditPlan + the (already
 // normalized) clip URLs + the output dimensions + the resolved music URL.
 // `safe: true` strips everything that isn't long-proven (transitions beyond a
-// hard cut, clip motion effects, text backgrounds/animations) — a fallback
-// when a fancy edit gets rejected by Shotstack, so the user still gets a video.
+// hard cut, clip motion effects, overlay backgrounds/animations/duration
+// overrides/named fonts) — a fallback when a fancy edit gets rejected by
+// Shotstack, so the user still gets a video.
 export function buildEdit(
   plan: EditPlan,
   clips: string[],
@@ -320,23 +510,16 @@ export function buildEdit(
     clips.length <= 2 ? 2.0 : 0,
   );
 
-  const overlays = safe
-    ? plan.text_overlays.map((o) => ({
-        ...o,
-        background: "none",
-        animation: "none" as const,
-        duration_seconds: null,
-        font_name: "",
-        font: "bold_sans" as const,
-        size: "medium" as const,
-        outline: "none" as const,
-      }))
-    : plan.text_overlays;
+  // Normalize first (so the renderer doesn't have to deal with mixed-schema
+  // input from old stored plans), then collapse for safe mode, then group.
+  const normalized = (plan.text_overlays ?? []).map((o) => migrateOverlay(o));
+  const finalOverlays = safe ? normalized.map(safeOverlay) : normalized;
+  const groups = groupByPosition(finalOverlays);
 
   const totalSeconds = videoDurationSeconds(clips.length, perClipSeconds);
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
-  if (overlays.length > 0) {
-    tracks.push(overlayTrack(overlays, size.width, size.height, preset.fontScale, totalSeconds));
+  if (groups.length > 0) {
+    tracks.push(overlayTrack(groups, size.width, size.height, preset.fontScale, totalSeconds));
   }
   tracks.push(
     videoTrack(clips, perClipSeconds, {
