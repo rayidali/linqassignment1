@@ -13,8 +13,19 @@ import { fetchWithTimeout, MEDIA_TIMEOUT_MS } from "../http.js";
 // ffmpeg-static's CJS default export resolves to the binary path at runtime
 // under esModuleInterop; the .d.ts/CJS interop confuses tsc's type, so cast.
 const FFMPEG_PATH = ffmpegStatic as unknown as string | null;
-const TRANSCODE_TIMEOUT_MS = 180_000;
+// Generous safety net — with MAX_INPUT_SECONDS capping the encode workload,
+// a normal iPhone HEVC 4K source finishes in well under 2 min on Render's
+// single-CPU Standard tier. 240s leaves headroom for a truly chunky decoder.
+const TRANSCODE_TIMEOUT_MS = 240_000;
 const MAX_INPUT_BYTES = 150 * 1024 * 1024;
+// PRIMARY FIX for the "long clip → ffmpeg timeout → whole job dies" failure:
+// we only ever USE the first ~12 seconds of any clip (single-clip edits play
+// up to that long; montages trim each to ≤6.5s via PACE_TO_CLIP_SECONDS), so
+// transcoding the full 5-minute family video is wasted work that then hangs
+// the worker. Cap the ENCODE at 60s — ffmpeg stops reading the input once
+// 60s of output is produced, so a 30-minute source costs the same time as
+// a 60-second one. 60s is 5× the longest segment we'd actually render.
+const MAX_INPUT_SECONDS = 60;
 // Long-side cap for normalized media — 1080p output. (Was 1280 on the 512MB
 // free tier; the Standard instance has the RAM/CPU headroom for 1920.)
 const MAX_DIMENSION = 1920;
@@ -72,10 +83,20 @@ export async function fetchAndNormalize(
     const args = [
       "-y",
       "-i", inPath,
+      // Cap the OUTPUT duration. ffmpeg stops reading the input once this many
+      // seconds of output have been produced, so a 30-minute source takes
+      // about as long to transcode as a 60-second one. This is the primary
+      // defense against "user sent a long iPhone 4K HEVC clip → ffmpeg times
+      // out at 180s → whole job dies." We never use more than ~12s of any
+      // clip downstream anyway.
+      "-t", String(MAX_INPUT_SECONDS),
       // First scale: fit within a MAX_DIMENSION box, preserving aspect, only
       // shrinking (decrease). Second: round to even dims (H.264 requires it).
       "-vf", `scale=${MAX_DIMENSION}:${MAX_DIMENSION}:force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", X264_CRF, "-pix_fmt", "yuv420p",
+      // superfast trades a bit of compression efficiency (larger output file)
+      // for a meaningfully faster encode — the right call for short demo
+      // clips on a single-CPU instance.
+      "-c:v", "libx264", "-preset", "superfast", "-crf", X264_CRF, "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "128k",
       "-movflags", "+faststart",
       outPath,

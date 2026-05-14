@@ -319,9 +319,45 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
       // Sequentially, NOT in parallel: each ffmpeg transcode is CPU- and
       // memory-heavy and the instance is a single core — running them
       // concurrently just thrashes the CPU and risks an OOM kill.
+      // Per-clip try/catch: if ONE clip fails (corrupt, too long even with the
+      // input cap, decoder hates the codec), keep the others. Only fail the
+      // whole job if EVERY clip failed. This prevents the asymmetric blast
+      // radius where clip 2 of 2 dying drops clip 1's already-on-R2 work.
+      type FailedClip = { filename: string; mimeType: string; error: string };
       const downloads: DownloadResult[] = [];
+      const succeededParts: MediaPart[] = [];
+      const failures: FailedClip[] = [];
       for (const p of usable) {
-        downloads.push(await downloadMedia(job.id, p.url, p.filename, p.mime_type));
+        try {
+          downloads.push(await downloadMedia(job.id, p.url, p.filename, p.mime_type));
+          succeededParts.push(p);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn(
+            { jobId: job.id, filename: p.filename, mimeType: p.mime_type, err: msg },
+            "media normalization failed, dropping this clip and continuing with the rest",
+          );
+          failures.push({ filename: p.filename, mimeType: p.mime_type, error: msg });
+        }
+      }
+      if (downloads.length === 0) {
+        // Every clip failed — fail the job. Carry a hint of the underlying
+        // cause through to notifyVideoFailure so the user gets the right
+        // friendly message ("that clip was too long…" vs the generic one).
+        const sample = failures[0]?.error ?? "no editable video or photo in the message";
+        const reason = /timed out|too long|too large/i.test(sample)
+          ? `all ${failures.length} clip(s) were too long or too big to process`
+          : sample;
+        return { nextState: "failed", error: reason };
+      }
+      if (failures.length > 0) {
+        // Tell the user we dropped some, so the resulting fewer-clip edit
+        // isn't a surprise. Best-effort send.
+        const n = failures.length;
+        const text = n === 1
+          ? "okay one of ur clips was too long or borked, dropping it and using the rest bb"
+          : `okay had to drop ${n} clips (too long or borked), using the rest bb`;
+        await sendTextReply(chatId, text, `${job.id}-partial`).catch(() => {});
       }
       const clips: ClipDownload[] = downloads.map((d, i) => ({
         r2Key: d.key,
@@ -330,13 +366,17 @@ async function advanceVideoJob(job: JobRow): Promise<AdvanceResult> {
         contentType: d.contentType,
         width: d.width,
         height: d.height,
-        sourceUrl: usable[i]!.url,
-        filename: usable[i]!.filename,
+        sourceUrl: succeededParts[i]!.url,
+        filename: succeededParts[i]!.filename,
       }));
       const first = clips[0]!;
       return {
         nextState: "downloaded",
-        resultPatch: { clips, outputSize: { width: first.width, height: first.height } },
+        resultPatch: {
+          clips,
+          outputSize: { width: first.width, height: first.height },
+          ...(failures.length > 0 ? { droppedClips: failures } : {}),
+        },
       };
     }
 

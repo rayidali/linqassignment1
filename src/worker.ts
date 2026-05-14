@@ -48,8 +48,14 @@ async function claimOneJob(): Promise<JobRow | null> {
 
 async function notifyVideoFailure(job: JobRow, errorMsg: string): Promise<void> {
   if (job.type !== "video" || !job.chatId) return;
-  const friendly = /no editable|no media/i.test(errorMsg)
-    ? "aw bb i can only do videos and pics rn, hit me with one of those"
+  // Pick the most honest message for what actually broke. The generic
+  // "broke on me" implies a transient glitch — misleading when the real
+  // cause is the user's input being too big / too long.
+  const friendly =
+    /no editable|no media/i.test(errorMsg)
+      ? "aw bb i can only do videos and pics rn, hit me with one of those"
+    : /timed out|too long|too large|too big/i.test(errorMsg)
+      ? "ouf that clip was too long or too gnarly for me to handle bb, try a shorter one (under like a min works best)"
     : "ugh that one broke on me, try again bestie? lmk if it keeps happening and ill fix it";
   await sendTextReply(job.chatId, friendly, `${job.id}-fail`).catch((e) => {
     logger.warn(
