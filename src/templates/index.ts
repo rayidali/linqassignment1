@@ -377,21 +377,32 @@ function lengthShrink(role: OverlayRoleId, text: string): number {
   return 0.50;                     // truly long (>30 chars) — keep readable
 }
 
-// Per-line layout: font size + line-height-in-pixels. Computed server-side so
-// the renderer doesn't need to do flex/block layout (Shotstack's headless
-// browser had a history of dropping CSS layout — flex column, in particular,
-// was the silent failure behind the persistent overlay-overlap bug). With
-// absolute positioning + server-computed y values, we don't depend on the
-// renderer for layout at all.
-type LineLayout = {
+// Each rendered line is a fully independent Shotstack clip on its own track,
+// positioned via Shotstack's clip-level offset.y. We do NOT pack multiple
+// lines into one HTML asset and ask the renderer to stack them — that path
+// has bitten us in production across three different layout approaches
+// (flex column, block flow, absolute positioning) because Shotstack's
+// headless browser doesn't reliably honor within-asset layout. One line per
+// asset eliminates the renderer from the layout decision entirely.
+type LineSpec = {
   overlay: NormalizedOverlay;
   fontSize: number;
-  lineHeightPx: number; // CSS line-height: 1.15 * fontSize, rounded
-  topPx: number;        // absolute y within the asset box
+  lineHeightPx: number;
+  offsetY: number;       // Shotstack offset.y — fraction of frame height
+  assetHeightPx: number; // tight box around the line, with breathing padding
 };
 
 const LINE_HEIGHT_RATIO = 1.15;
-const INTER_LINE_EM = 0.45; // gap between adjacent stacked lines, in em of the smaller font
+// Gap between adjacent stacked lines uses the LARGER adjacent font so the gap
+// scales with the dominant element. Floor at 36px so even a tiny caption
+// can't press up against a hero. The previous "min font × 0.45em" formula
+// produced ~18px gaps that were swallowed by glyph descenders/ascenders.
+const INTER_LINE_EM = 0.55;
+const INTER_LINE_MIN_PX = 36;
+// Asset height padding above and below each line's text, so the asset box
+// fully contains glyph ascenders/descenders even on fonts with extreme
+// metrics (Anton, handwritten markers).
+const LINE_ASSET_PAD_PX = 24;
 
 function computeFontSize(o: NormalizedOverlay, minSide: number, fontScale: number): number {
   const sizeFactor = FONT_SIZE_FACTOR[o.size] ?? 1;
@@ -400,49 +411,58 @@ function computeFontSize(o: NormalizedOverlay, minSide: number, fontScale: numbe
   return Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor * lengthFactor));
 }
 
-// Lays out a stack of overlay lines vertically within the asset box, computing
-// each line's pixel-precise y-coordinate. Vertically centers the whole stack
-// in the box. Inter-line margin = 0.45em of the smaller adjacent font, so a
-// hero/subtitle pair has proportional breathing room.
-function layoutStack(
+// Computes the y-coordinate (in Shotstack offset.y units, i.e. fraction of
+// frame height from the frame center) for each line in a same-position group.
+// Lines are vertically stacked around the group's position-band center,
+// preserving the matcher's order. Generous inter-line gap so glyph metrics
+// can't push two lines into visual overlap.
+function layoutLines(
   group: NormalizedOverlay[],
-  minSide: number,
+  outputW: number,
+  outputH: number,
   fontScale: number,
-  boxH: number,
-): LineLayout[] {
+): LineSpec[] {
+  const minSide = Math.min(outputW, outputH);
   const sized = group.map((o) => {
     const fontSize = computeFontSize(o, minSide, fontScale);
-    return { overlay: o, fontSize, lineHeightPx: Math.round(fontSize * LINE_HEIGHT_RATIO), topPx: 0 };
+    const lineHeightPx = Math.round(fontSize * LINE_HEIGHT_RATIO);
+    return { overlay: o, fontSize, lineHeightPx };
   });
-  // Total height: sum of line heights + sum of gaps between adjacent lines.
-  let total = sized[0]?.lineHeightPx ?? 0;
-  for (let i = 1; i < sized.length; i++) {
-    const gap = Math.round(Math.min(sized[i - 1]!.fontSize, sized[i]!.fontSize) * INTER_LINE_EM);
-    total += gap + sized[i]!.lineHeightPx;
+  // Inter-line gaps (length === sized.length - 1).
+  const gaps: number[] = [];
+  for (let i = 0; i < sized.length - 1; i++) {
+    const larger = Math.max(sized[i]!.fontSize, sized[i + 1]!.fontSize);
+    gaps.push(Math.max(INTER_LINE_MIN_PX, Math.round(larger * INTER_LINE_EM)));
   }
-  // Vertically center the stack inside the box. If the stack is taller than
-  // the box (which lengthShrink should prevent, but defensively…), let it
-  // overflow at the top so the top line still appears at top:0 minimum.
-  const startY = Math.max(0, Math.round((boxH - total) / 2));
-  let cursor = startY;
-  for (let i = 0; i < sized.length; i++) {
-    sized[i]!.topPx = cursor;
-    cursor += sized[i]!.lineHeightPx;
-    if (i + 1 < sized.length) {
-      const gap = Math.round(Math.min(sized[i]!.fontSize, sized[i + 1]!.fontSize) * INTER_LINE_EM);
-      cursor += gap;
-    }
-  }
-  return sized;
+  // Total stack height (sum of line heights + sum of gaps).
+  const totalH = sized.reduce((acc, s, i) => acc + s.lineHeightPx + (i < gaps.length ? gaps[i]! : 0), 0);
+  // Band center in absolute frame pixels (e.g. for top: 0.5 * H + (-0.30) * H = 0.20 * H).
+  const bandFraction = POSITION_Y_OFFSET[group[0]!.position];
+  const bandCenterY = outputH * 0.5 + bandFraction * outputH;
+  // Stack top in absolute frame pixels.
+  let cursor = bandCenterY - totalH / 2;
+  return sized.map((s, i) => {
+    const lineTopY = cursor;
+    const lineCenterY = lineTopY + s.lineHeightPx / 2;
+    cursor += s.lineHeightPx + (i < gaps.length ? gaps[i]! : 0);
+    // Convert absolute Y back to Shotstack offset.y fraction.
+    const offsetY = (lineCenterY - outputH * 0.5) / outputH;
+    return {
+      overlay: s.overlay,
+      fontSize: s.fontSize,
+      lineHeightPx: s.lineHeightPx,
+      offsetY,
+      assetHeightPx: s.lineHeightPx + LINE_ASSET_PAD_PX * 2,
+    };
+  });
 }
 
-// Builds the @font-face block (one) + per-line CSS rule (positioned absolutely
-// at the server-computed top, with all per-line styling baked in).
-function lineCss(
-  layout: LineLayout,
-  idx: number,
-): { faceCss: string; ruleCss: string } {
-  const o = layout.overlay;
+// Builds the HTML asset (one line, one asset) for a single LineSpec. The
+// asset is a single <p> centered horizontally; vertical alignment is handled
+// by Shotstack's clip position+offset since the asset box height is tight to
+// the line height. No flex / no inner positioning math.
+function buildLineAsset(spec: LineSpec, boxW: number): Record<string, unknown> {
+  const o = spec.overlay;
   const color = sanitizeColor(o.color);
   const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
   const f = FONT_SPECS[o.font] ?? FONT_SPECS.bold_sans;
@@ -457,21 +477,32 @@ function lineCss(
   const faceCss =
     `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
     (nf ? nf.faceCss : ``);
-  // Absolute positioning per line — bulletproof in any HTML renderer because
-  // we don't ask the renderer to interpret flex/block layout. Each line gets
-  // its precise server-computed top:Npx.
-  const ruleCss =
-    `p.line-${idx}{` +
-    `position:absolute;top:${layout.topPx}px;left:4%;right:4%;` +
-    `margin:0;padding:0;text-align:center;` +
+  // The asset box height = line-height + small padding. The <p> fills it,
+  // text-align:center horizontally; line-height equal to the asset height so
+  // the text sits at the asset's vertical center. We deliberately keep this
+  // CSS minimal — no flex, no absolute positioning, no transforms — because
+  // every layout primitive we've leaned on has had a Shotstack rendering
+  // failure mode. With a one-line asset, "the text is the box" is enough.
+  const css =
+    faceCss +
+    `html,body{margin:0;padding:0;width:100%;height:100%}` +
+    `p.line{margin:0;padding:0;width:100%;height:100%;` +
+    `text-align:center;` +
     `font-family:${fontStack};font-weight:${f.weight};` +
-    `font-size:${layout.fontSize}px;line-height:${LINE_HEIGHT_RATIO};color:${color};` +
+    `font-size:${spec.fontSize}px;line-height:${spec.assetHeightPx}px;color:${color};` +
     caseRule +
     stroke +
-    (bg ? `background-color:${bg};border-radius:0.2em;padding:0.08em 0.42em;display:inline-block;` : ``) +
+    (bg ? `background-color:${bg};border-radius:0.2em;` : ``) +
     (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
     `}`;
-  return { faceCss, ruleCss };
+  const html = `<p class="line">${escapeHtml(o.text)}</p>`;
+  return {
+    type: "html",
+    html,
+    css,
+    width: boxW,
+    height: spec.assetHeightPx,
+  };
 }
 
 // Builds the overlay tracks for the timeline. CRITICAL: each overlay group
@@ -489,90 +520,45 @@ function overlayTracks(
   videoSeconds: number,
 ): ShotstackEdit["timeline"]["tracks"] {
   const boxW = Math.round(outputW * 0.92);
-  // Box height is generous enough to fit a wrapped hero+subtitle stack but
-  // not so big that a single zone visually owns the whole frame. Combined
-  // with the per-zone y-offset below, each zone has a clear vertical home.
-  const boxH = Math.round(outputH * 0.45);
-  const minSide = Math.min(outputW, outputH);
   const fullHold = Math.max(2.5, videoSeconds);
+  const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   let cursor = 0;
-  return groups.map((group, gIdx) => {
-    // Compute server-side layout for the stack: each line's pixel-precise
-    // top:N within the asset box. We DO NOT delegate stacking to the
-    // renderer's flex/block layout — that's been the silent failure mode in
-    // Shotstack's headless browser. Absolute positioning is bulletproof in
-    // any HTML renderer.
-    const layouts = layoutStack(group, minSide, fontScale, boxH);
-    const seenFaces = new Set<string>();
-    const faceCsses: string[] = [];
-    const ruleCsses: string[] = [];
-    const linesHtml: string[] = [];
-    layouts.forEach((layout, lineIdx) => {
-      const { faceCss, ruleCss } = lineCss(layout, lineIdx);
-      // Cheap dedupe: a face block starts with @font-face{font-family:'X';
-      // — bucket by that prefix.
-      const key = faceCss.slice(0, faceCss.indexOf("src:")); // family + weight + display, no src
-      if (!seenFaces.has(key)) {
-        seenFaces.add(key);
-        faceCsses.push(faceCss);
-      }
-      ruleCsses.push(ruleCss);
-      linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(layout.overlay.text)}</p>`);
-    });
-    const css =
-      faceCsses.join("") +
-      `html,body{margin:0;padding:0;width:100%;height:100%}` +
-      // The stack container is just a positioned coordinate system —
-      // children are absolutely positioned via per-line top:Npx. No flex,
-      // no block layout to depend on.
-      `.stack{position:relative;width:100%;height:100%;overflow:hidden}` +
-      ruleCsses.join("");
-    // Group's transition pair comes from the FIRST overlay (the hero, in a
-    // hero+subtitle stack). The whole block enters/exits as one unit.
+  groups.forEach((group, gIdx) => {
+    // Group-level timing (start/length/transition shared across all lines in
+    // the group so they enter and exit as one designed unit).
     const head = group[0]!;
     const inName = mapTransition(head.animation_in);
     const outName = mapTransition(head.animation_out);
     const transition = inName || outName ? { ...(inName ? { in: inName } : {}), ...(outName ? { out: outName } : {}) } : undefined;
-    // Duration: explicit number wins, with null priority — if ANY overlay in
-    // the group says null, the group holds for the full video. Otherwise
-    // use the max of the explicit durations (so all lines have time to read).
     const anyNull = group.some((o) => o.duration_seconds === null);
     const explicitMax = group.reduce((m, o) => (typeof o.duration_seconds === "number" ? Math.max(m, o.duration_seconds) : m), 0);
-    const length = anyNull
-      ? fullHold
-      : Math.min(60, Math.max(0.5, explicitMax || 2.7));
-    // Start: full-hold groups anchor at 0; explicit-duration groups sequence
-    // after the previous group (so a 2s flash card doesn't sit at 0 forever).
+    const length = anyNull ? fullHold : Math.min(60, Math.max(0.5, explicitMax || 2.7));
     const start = anyNull
       ? (gIdx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)))
       : Math.min(cursor, Math.max(0, videoSeconds - length));
     cursor = start + length + 0.2;
-    // Use Shotstack position="center" for every clip and shift each zone via
-    // an explicit y-offset. Anchoring boxes to frame edges (the previous
-    // approach) made adjacent zones overlap by hundreds of pixels even though
-    // text centers were apart — wrapped heroes bled across that overlap zone.
-    // Center-anchor + offset gives every zone a guaranteed vertical home.
-    const yOffset = POSITION_Y_OFFSET[head.position];
-    const clip = {
-      asset: {
-        type: "html",
-        html: `<div class="stack">${linesHtml.join("")}</div>`,
-        css,
-        width: boxW,
-        height: boxH,
-      },
-      position: "center",
-      ...(yOffset !== 0 ? { offset: { x: 0, y: yOffset } } : {}),
-      start,
-      length,
-      ...(transition ? { transition } : {}),
-    };
-    // Each group gets ITS OWN TRACK so multiple overlay groups can never
-    // share a Shotstack track and trigger the renderer's ambiguous overlap
-    // behavior (the production bug behind the "two overlays at the same y"
-    // failure). One overlay group → one track → one z-layer.
-    return { clips: [clip] };
+
+    // Each line in the group becomes its OWN Shotstack clip on its OWN track,
+    // positioned by Shotstack's clip-level offset.y. No within-asset stacking
+    // to fail. The lines share the same start/length/transition so they read
+    // as a unit. layoutLines() does the y math.
+    const lineSpecs = layoutLines(group, outputW, outputH, fontScale);
+    for (const spec of lineSpecs) {
+      tracks.push({
+        clips: [
+          {
+            asset: buildLineAsset(spec, boxW),
+            position: "center",
+            ...(spec.offsetY !== 0 ? { offset: { x: 0, y: spec.offsetY } } : {}),
+            start,
+            length,
+            ...(transition ? { transition } : {}),
+          },
+        ],
+      });
+    }
   });
+  return tracks;
 }
 
 // Exported for the estimator in state.ts so the render-time estimate counts
