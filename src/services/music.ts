@@ -39,6 +39,41 @@ function tempoToSpeed(tempo: MusicSpec["tempo"]): string | null {
 // random choice among the top-N gives variety (no more "always the same most-
 // popular track for these tags"). Curated-ID lookups stay at limit 1.
 const CANDIDATE_POOL = 20;
+// Per-query pool size for the multi-signal scorer. Wider than CANDIDATE_POOL
+// because we INTERSECT pools — a track needs to appear in multiple queries to
+// score well, so individual pools can be generous without sacrificing quality.
+const SCORE_POOL = 40;
+// How many top-scored tracks to pick from at random. Big enough for variety,
+// small enough that we're always picking from the "robustly good" tier.
+const SCORE_PICK_TOP_K = 10;
+
+// In-process recent-picks penalty: the SAME track for the same spec
+// repeatedly is boring. Track IDs we've picked recently get a temporary score
+// penalty so the next pick rolls a different (still-high-scoring) candidate.
+// Resets on process restart, which is fine — Render restarts every few hours.
+const RECENT_PICK_TTL_MS = 60 * 60 * 1000; // 1 hour
+const RECENT_PICK_MAX_PENALTY = 4; // matches the score weights below
+const recentPicks = new Map<string, number>(); // trackId -> picked-at epoch ms
+
+function recordRecentPick(trackId: string): void {
+  recentPicks.set(trackId, Date.now());
+  // Opportunistic prune so the map can't grow unbounded.
+  if (recentPicks.size > 256) {
+    const cutoff = Date.now() - RECENT_PICK_TTL_MS;
+    for (const [id, t] of recentPicks) {
+      if (t < cutoff) recentPicks.delete(id);
+    }
+  }
+}
+
+function recentPickPenalty(trackId: string): number {
+  const last = recentPicks.get(trackId);
+  if (!last) return 0;
+  const ageMs = Date.now() - last;
+  if (ageMs >= RECENT_PICK_TTL_MS) return 0;
+  // Linear decay from full penalty (just picked) to 0 (after the TTL).
+  return -RECENT_PICK_MAX_PENALTY * (1 - ageMs / RECENT_PICK_TTL_MS);
+}
 
 function buildUrl(extra: Record<string, string>, limit = 1): string {
   const url = new URL(`${JAMENDO_API}/tracks/`);
@@ -101,42 +136,145 @@ function curatedTrackId(spec: MusicSpec): string | undefined {
 async function findTrack(spec: MusicSpec): Promise<JamendoTrack | null> {
   if (!env.JAMENDO_CLIENT_ID) return null;
 
+  // 1) Curated track wins — these are hand-picked and known good.
   const curatedId = curatedTrackId(spec);
   if (curatedId) {
     const t = await fetchTrack(buildUrl({ id: curatedId }));
-    if (t) return t;
-  }
-
-  const tags = spec.tags.map((t) => t.trim()).filter(Boolean);
-  const speed = tempoToSpeed(spec.tempo) ?? "";
-  const ae = spec.acoustic_or_electric === "any" ? "" : spec.acoustic_or_electric;
-  const search = spec.freetext.trim();
-
-  // Tag-driven, progressively broader. Jamendo's free-text `search` is famously
-  // loose (it returns "popular-ish" tracks, not genre matches), so it's a LAST
-  // resort — the `tags` filter does the real work. Try the full tag set first
-  // (most specific), then fall back to just the FIRST tag (the core sound/genre
-  // — the one that matters most), then fuzzy tags, then `search`. Each query
-  // pulls a pool and we pick one at random for variety.
-  const queries: Array<Record<string, string>> = [];
-  if (tags.length > 0) {
-    const all = tags.join(",");
-    queries.push({ tags: all, speed, acousticelectric: ae }); // full tags + filters (empty filters are dropped)
-    if (speed || ae) queries.push({ tags: all }); // full tags, no speed/ae
-    if (tags.length > 1) {
-      queries.push({ tags: tags[0]!, speed }); // just the genre tag (+ speed if any)
-      if (speed) queries.push({ tags: tags[0]! });
+    if (t) {
+      recordRecentPick(t.id!);
+      return t;
     }
-    queries.push({ fuzzytags: all }); // loose tag match
   }
-  if (search) queries.push({ search }); // last resort: Jamendo's loose name search
 
-  for (const q of queries) {
-    const pool = filterTracks(spec, await fetchTracks(buildUrl(q, CANDIDATE_POOL)));
+  // 2) Multi-signal scored selection — works for ANY genre. See pickByScore().
+  const scored = await pickByScore(spec);
+  if (scored) {
+    recordRecentPick(scored.id!);
+    return scored;
+  }
+
+  // 3) Last-resort fallback: Jamendo's loose `search` against the matcher's
+  // freetext. Only triggers when scoring produced no candidates at all
+  // (extremely rare — only an empty/invalid genre + no freetext gets here).
+  const search = spec.freetext.trim();
+  if (search) {
+    const pool = filterTracks(spec, await fetchTracks(buildUrl({ search }, CANDIDATE_POOL)));
     const t = pickOne(pool);
-    if (t) return t;
+    if (t) {
+      recordRecentPick(t.id!);
+      return t;
+    }
   }
   return null;
+}
+
+// Multi-signal scored selector. Issues several Jamendo queries in PARALLEL with
+// different ranking signals (lifetime popularity, current-month trending) and
+// filter intensities (with/without tempo, with/without instrumentation), then
+// scores each track by how many queries it appears in and how high it ranks
+// in each. A track that's "robustly good" — popular long-term AND currently
+// listened to AND matches the user's tempo AND instrumentation — scores
+// highest. Filters BOOST instead of EXCLUDING, so we never end up with an
+// empty pool. Then picks randomly from the top-K for variety.
+//
+// Genre-agnostic by design: this same algorithm is the fix for jazz, R&B,
+// country, indie, lofi, anything. The previous single-query selector
+// over-narrowed any time the matcher added a tempo + acoustic filter,
+// surfacing whichever 3-5 obscure tracks happened to match all filters.
+async function pickByScore(spec: MusicSpec): Promise<JamendoTrack | null> {
+  const tags = spec.tags.map((t) => t.trim()).filter(Boolean);
+  if (tags.length === 0) return null;
+
+  const allTags = tags.join(",");
+  const firstTag = tags[0]!;
+  const speed = tempoToSpeed(spec.tempo) ?? "";
+  const ae = spec.acoustic_or_electric === "any" ? "" : spec.acoustic_or_electric;
+
+  // Build the parallel query plan. Weights reflect signal strength:
+  //  - Lifetime popularity: 3 (most reliable signal)
+  //  - Recent (monthly) popularity: 2 (currently relevant)
+  //  - Tempo / instrumentation match: 2 each (vibe match boost)
+  // A track hitting all four signals scores ~9, dominating any track hitting
+  // only one or two.
+  type Q = { q: Record<string, string>; weight: number; name: string };
+  const queries: Q[] = [
+    { q: { tags: allTags, order: "popularity_total" }, weight: 3, name: "lifetime_full_tags" },
+    { q: { tags: allTags, order: "popularity_month" }, weight: 2, name: "trending_full_tags" },
+  ];
+  // If the matcher used multiple tags, ALSO query just the genre tag (the
+  // first tag) — surfaces tracks that match the core sound but not the
+  // narrower mood combo. Keeps quality without strict tag-AND requirement.
+  if (tags.length > 1) {
+    queries.push({ q: { tags: firstTag, order: "popularity_total" }, weight: 2, name: "lifetime_genre_only" });
+  }
+  // Filter-as-boost queries: the user's tempo + instrumentation preferences
+  // are signal, but not exclusionary — a track that matches them gets a
+  // score bump rather than being the only candidate.
+  if (speed) {
+    queries.push({ q: { tags: firstTag, speed, order: "popularity_total" }, weight: 2, name: "tempo_match" });
+  }
+  if (ae) {
+    queries.push({ q: { tags: firstTag, acousticelectric: ae, order: "popularity_total" }, weight: 2, name: "instr_match" });
+  }
+
+  const results = await Promise.all(
+    queries.map(async ({ q, weight, name }) => {
+      const tracks = filterTracks(spec, await fetchTracks(buildUrl(q, SCORE_POOL)));
+      return { tracks, weight, name };
+    }),
+  );
+
+  // Score each unique track. Position decay: top-of-pool tracks get the full
+  // weight; bottom-of-pool tracks get 0.3× — so the algorithm prefers the
+  // genuinely top picks of each query rather than rewarding any-appearance.
+  type Scored = { track: JamendoTrack; score: number; sources: string[] };
+  const scoreMap = new Map<string, Scored>();
+  for (const { tracks, weight, name } of results) {
+    tracks.forEach((t, idx) => {
+      if (!t.id) return;
+      const positionFactor = Math.max(0.3, 1 - idx / SCORE_POOL);
+      const contribution = weight * positionFactor;
+      const existing = scoreMap.get(t.id);
+      if (existing) {
+        existing.score += contribution;
+        existing.sources.push(name);
+      } else {
+        scoreMap.set(t.id, { track: t, score: contribution, sources: [name] });
+      }
+    });
+  }
+
+  if (scoreMap.size === 0) return null;
+
+  // Apply the recent-pick penalty so we don't repeat the same track on
+  // back-to-back requests for the same spec.
+  for (const entry of scoreMap.values()) {
+    entry.score += recentPickPenalty(entry.track.id!);
+  }
+
+  // Sort by score, pick uniformly random from the top K. Top K is the
+  // "robustly good" tier; randomness within it is the variety knob.
+  const sorted = Array.from(scoreMap.values()).sort((a, b) => b.score - a.score);
+  const topK = sorted.slice(0, Math.min(SCORE_PICK_TOP_K, sorted.length));
+  const picked = pickOne(topK.map((s) => s.track));
+  if (picked) {
+    const pickedScored = scoreMap.get(picked.id!);
+    logger.info(
+      {
+        spec,
+        candidates: scoreMap.size,
+        topKSize: topK.length,
+        pickedId: picked.id,
+        pickedName: picked.name,
+        pickedArtist: picked.artist_name,
+        pickedScore: pickedScored?.score.toFixed(2),
+        pickedSources: pickedScored?.sources,
+        topPicks: topK.slice(0, 5).map((s) => ({ id: s.track.id, name: s.track.name, score: Number(s.score.toFixed(2)), sources: s.sources })),
+      },
+      "music: scored pick",
+    );
+  }
+  return picked;
 }
 
 // Resolves a music spec to a playable R2-hosted MP3 URL: finds a royalty-free
