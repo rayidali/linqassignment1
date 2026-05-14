@@ -377,23 +377,76 @@ function lengthShrink(role: OverlayRoleId, text: string): number {
   return 0.50;                     // truly long (>30 chars) — keep readable
 }
 
-// Builds the per-line CSS for one overlay inside a stacked group. The class
-// name is line-N so each line can carry its own font, size, color, case,
-// outline, and pill background, all stacked inside one flex column.
-function lineCss(
-  o: NormalizedOverlay,
-  idx: number,
+// Per-line layout: font size + line-height-in-pixels. Computed server-side so
+// the renderer doesn't need to do flex/block layout (Shotstack's headless
+// browser had a history of dropping CSS layout — flex column, in particular,
+// was the silent failure behind the persistent overlay-overlap bug). With
+// absolute positioning + server-computed y values, we don't depend on the
+// renderer for layout at all.
+type LineLayout = {
+  overlay: NormalizedOverlay;
+  fontSize: number;
+  lineHeightPx: number; // CSS line-height: 1.15 * fontSize, rounded
+  topPx: number;        // absolute y within the asset box
+};
+
+const LINE_HEIGHT_RATIO = 1.15;
+const INTER_LINE_EM = 0.45; // gap between adjacent stacked lines, in em of the smaller font
+
+function computeFontSize(o: NormalizedOverlay, minSide: number, fontScale: number): number {
+  const sizeFactor = FONT_SIZE_FACTOR[o.size] ?? 1;
+  const roleFactor = ROLE_FACTOR[o.role] ?? 1;
+  const lengthFactor = lengthShrink(o.role, o.text);
+  return Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor * lengthFactor));
+}
+
+// Lays out a stack of overlay lines vertically within the asset box, computing
+// each line's pixel-precise y-coordinate. Vertically centers the whole stack
+// in the box. Inter-line margin = 0.45em of the smaller adjacent font, so a
+// hero/subtitle pair has proportional breathing room.
+function layoutStack(
+  group: NormalizedOverlay[],
   minSide: number,
   fontScale: number,
-): { faceCss: string; ruleCss: string; fontStack: string } {
+  boxH: number,
+): LineLayout[] {
+  const sized = group.map((o) => {
+    const fontSize = computeFontSize(o, minSide, fontScale);
+    return { overlay: o, fontSize, lineHeightPx: Math.round(fontSize * LINE_HEIGHT_RATIO), topPx: 0 };
+  });
+  // Total height: sum of line heights + sum of gaps between adjacent lines.
+  let total = sized[0]?.lineHeightPx ?? 0;
+  for (let i = 1; i < sized.length; i++) {
+    const gap = Math.round(Math.min(sized[i - 1]!.fontSize, sized[i]!.fontSize) * INTER_LINE_EM);
+    total += gap + sized[i]!.lineHeightPx;
+  }
+  // Vertically center the stack inside the box. If the stack is taller than
+  // the box (which lengthShrink should prevent, but defensively…), let it
+  // overflow at the top so the top line still appears at top:0 minimum.
+  const startY = Math.max(0, Math.round((boxH - total) / 2));
+  let cursor = startY;
+  for (let i = 0; i < sized.length; i++) {
+    sized[i]!.topPx = cursor;
+    cursor += sized[i]!.lineHeightPx;
+    if (i + 1 < sized.length) {
+      const gap = Math.round(Math.min(sized[i]!.fontSize, sized[i + 1]!.fontSize) * INTER_LINE_EM);
+      cursor += gap;
+    }
+  }
+  return sized;
+}
+
+// Builds the @font-face block (one) + per-line CSS rule (positioned absolutely
+// at the server-computed top, with all per-line styling baked in).
+function lineCss(
+  layout: LineLayout,
+  idx: number,
+): { faceCss: string; ruleCss: string } {
+  const o = layout.overlay;
   const color = sanitizeColor(o.color);
   const bg = o.background && o.background.trim().toLowerCase() !== "none" ? sanitizeColor(o.background) : null;
   const f = FONT_SPECS[o.font] ?? FONT_SPECS.bold_sans;
   const nf = namedFontFace(o.font_name); // optional Google Font by name
-  const sizeFactor = FONT_SIZE_FACTOR[o.size] ?? 1;
-  const roleFactor = ROLE_FACTOR[o.role] ?? 1;
-  const lengthFactor = lengthShrink(o.role, o.text);
-  const fontSize = Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor * lengthFactor));
   const stroke =
     o.outline === "dark" ? `-webkit-text-stroke:0.06em #000;paint-order:stroke fill;` :
     o.outline === "light" ? `-webkit-text-stroke:0.06em #fff;paint-order:stroke fill;` : ``;
@@ -404,15 +457,21 @@ function lineCss(
   const faceCss =
     `@font-face{font-family:'${f.family}';font-weight:${f.weight};font-display:swap;src:url('${f.url}') format('woff2')}` +
     (nf ? nf.faceCss : ``);
+  // Absolute positioning per line — bulletproof in any HTML renderer because
+  // we don't ask the renderer to interpret flex/block layout. Each line gets
+  // its precise server-computed top:Npx.
   const ruleCss =
-    `p.line-${idx}{font-family:${fontStack};font-weight:${f.weight};` +
-    `font-size:${fontSize}px;color:${color};` +
+    `p.line-${idx}{` +
+    `position:absolute;top:${layout.topPx}px;left:4%;right:4%;` +
+    `margin:0;padding:0;text-align:center;` +
+    `font-family:${fontStack};font-weight:${f.weight};` +
+    `font-size:${layout.fontSize}px;line-height:${LINE_HEIGHT_RATIO};color:${color};` +
     caseRule +
     stroke +
-    (bg ? `background-color:${bg};border-radius:0.2em;padding:0.08em 0.42em;` : ``) +
+    (bg ? `background-color:${bg};border-radius:0.2em;padding:0.08em 0.42em;display:inline-block;` : ``) +
     (!bg && !stroke ? `text-shadow:0 3px 14px rgba(0,0,0,0.75);` : ``) +
     `}`;
-  return { faceCss, ruleCss, fontStack };
+  return { faceCss, ruleCss };
 }
 
 // Builds the overlay tracks for the timeline. CRITICAL: each overlay group
@@ -438,15 +497,18 @@ function overlayTracks(
   const fullHold = Math.max(2.5, videoSeconds);
   let cursor = 0;
   return groups.map((group, gIdx) => {
-    // Compose per-line CSS for the whole stack. @font-face declarations are
-    // deduped by family name so the same font isn't redeclared if multiple
-    // lines share it.
+    // Compute server-side layout for the stack: each line's pixel-precise
+    // top:N within the asset box. We DO NOT delegate stacking to the
+    // renderer's flex/block layout — that's been the silent failure mode in
+    // Shotstack's headless browser. Absolute positioning is bulletproof in
+    // any HTML renderer.
+    const layouts = layoutStack(group, minSide, fontScale, boxH);
     const seenFaces = new Set<string>();
     const faceCsses: string[] = [];
     const ruleCsses: string[] = [];
     const linesHtml: string[] = [];
-    group.forEach((o, lineIdx) => {
-      const { faceCss, ruleCss } = lineCss(o, lineIdx, minSide, fontScale);
+    layouts.forEach((layout, lineIdx) => {
+      const { faceCss, ruleCss } = lineCss(layout, lineIdx);
       // Cheap dedupe: a face block starts with @font-face{font-family:'X';
       // — bucket by that prefix.
       const key = faceCss.slice(0, faceCss.indexOf("src:")); // family + weight + display, no src
@@ -455,20 +517,15 @@ function overlayTracks(
         faceCsses.push(faceCss);
       }
       ruleCsses.push(ruleCss);
-      linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(o.text)}</p>`);
+      linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(layout.overlay.text)}</p>`);
     });
     const css =
       faceCsses.join("") +
       `html,body{margin:0;padding:0;width:100%;height:100%}` +
-      // Flex column: vertically center the stack, horizontally center each line.
-      // inline-block lines so pill backgrounds hug their text instead of going edge-to-edge.
-      `.stack{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%;text-align:center;overflow:hidden}` +
-      `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}` +
-      // Generous vertical breathing room between stacked lines (hero +
-      // subtitle reads as a designed pair, not a cramped pair). Sized in em
-      // of the second line so it scales with the smaller font and keeps
-      // proportionality across font sizes.
-      `.stack p + p{margin-top:0.45em}` +
+      // The stack container is just a positioned coordinate system —
+      // children are absolutely positioned via per-line top:Npx. No flex,
+      // no block layout to depend on.
+      `.stack{position:relative;width:100%;height:100%;overflow:hidden}` +
       ruleCsses.join("");
     // Group's transition pair comes from the FIRST overlay (the hero, in a
     // hero+subtitle stack). The whole block enters/exits as one unit.
