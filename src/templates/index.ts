@@ -359,6 +359,24 @@ const POSITION_Y_OFFSET: Record<NormalizedOverlay["position"], number> = {
   bottom: 0.30,
 };
 
+// Auto-shrinks a hero/subtitle font when the text is long, so an "A TRIP TO
+// NEW YORK"-style title doesn't wrap to 3 lines and dominate the frame. Only
+// applies when role's natural size is generous enough to wrap (hero/subtitle);
+// body/caption are already small. Curve is a soft step-down keyed to char
+// count so short titles keep their punch.
+function lengthShrink(role: OverlayRoleId, text: string): number {
+  if (role !== "hero" && role !== "subtitle") return 1;
+  const n = text.trim().length;
+  // Tuned so a hero on a 992px-wide box stays on ≤ 2 lines for typical
+  // condensed/bold fonts. Subtitles also shrink a bit so a long tagline
+  // doesn't crowd the hero above it.
+  if (n <= 8) return 1;            // "MEXICO", "NO DAYS OFF" — full size
+  if (n <= 14) return 0.85;        // "TRIP TO NYC" — slight shrink
+  if (n <= 20) return 0.70;        // "A TRIP TO NEW YORK" — fits on 1-2 lines
+  if (n <= 30) return 0.58;
+  return 0.50;                     // truly long (>30 chars) — keep readable
+}
+
 // Builds the per-line CSS for one overlay inside a stacked group. The class
 // name is line-N so each line can carry its own font, size, color, case,
 // outline, and pill background, all stacked inside one flex column.
@@ -374,7 +392,8 @@ function lineCss(
   const nf = namedFontFace(o.font_name); // optional Google Font by name
   const sizeFactor = FONT_SIZE_FACTOR[o.size] ?? 1;
   const roleFactor = ROLE_FACTOR[o.role] ?? 1;
-  const fontSize = Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor));
+  const lengthFactor = lengthShrink(o.role, o.text);
+  const fontSize = Math.max(16, Math.round(minSide * fontScale * roleFactor * sizeFactor * lengthFactor));
   const stroke =
     o.outline === "dark" ? `-webkit-text-stroke:0.06em #000;paint-order:stroke fill;` :
     o.outline === "light" ? `-webkit-text-stroke:0.06em #fff;paint-order:stroke fill;` : ``;
@@ -396,13 +415,20 @@ function lineCss(
   return { faceCss, ruleCss, fontStack };
 }
 
-function overlayTrack(
+// Builds the overlay tracks for the timeline. CRITICAL: each overlay group
+// gets its OWN track. We previously put all overlay clips on one track, but
+// when multiple HTML-asset clips overlap in time on the same Shotstack track,
+// the renderer's z-order/occlusion behavior is ambiguous — in production this
+// produced visually overlapping text even after groupByPosition correctly
+// stacked same-position items into one HTML asset. One group per track gives
+// every group a dedicated render layer.
+function overlayTracks(
   groups: NormalizedOverlay[][],
   outputW: number,
   outputH: number,
   fontScale: number,
   videoSeconds: number,
-): ShotstackEdit["timeline"]["tracks"][number] {
+): ShotstackEdit["timeline"]["tracks"] {
   const boxW = Math.round(outputW * 0.92);
   // Box height is generous enough to fit a wrapped hero+subtitle stack but
   // not so big that a single zone visually owns the whole frame. Combined
@@ -411,82 +437,85 @@ function overlayTrack(
   const minSide = Math.min(outputW, outputH);
   const fullHold = Math.max(2.5, videoSeconds);
   let cursor = 0;
-  return {
-    clips: groups.map((group, gIdx) => {
-      // Compose per-line CSS for the whole stack. @font-face declarations are
-      // deduped by family name so the same font isn't redeclared if multiple
-      // lines share it.
-      const seenFaces = new Set<string>();
-      const faceCsses: string[] = [];
-      const ruleCsses: string[] = [];
-      const linesHtml: string[] = [];
-      group.forEach((o, lineIdx) => {
-        const { faceCss, ruleCss } = lineCss(o, lineIdx, minSide, fontScale);
-        // Cheap dedupe: a face block starts with @font-face{font-family:'X';
-        // — bucket by that prefix.
-        const key = faceCss.slice(0, faceCss.indexOf("src:")); // family + weight + display, no src
-        if (!seenFaces.has(key)) {
-          seenFaces.add(key);
-          faceCsses.push(faceCss);
-        }
-        ruleCsses.push(ruleCss);
-        linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(o.text)}</p>`);
-      });
-      const css =
-        faceCsses.join("") +
-        `body{margin:0}` +
-        // Flex column: vertically center the stack, horizontally center each line.
-        // inline-block lines so pill backgrounds hug their text instead of going edge-to-edge.
-        `.stack{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%;text-align:center}` +
-        `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word}` +
-        // Generous vertical breathing room between stacked lines (hero +
-        // subtitle reads as a designed pair, not a cramped pair). Sized in em
-        // of the second line so it scales with the smaller font and keeps
-        // proportionality across font sizes.
-        `.stack p + p{margin-top:0.45em}` +
-        ruleCsses.join("");
-      // Group's transition pair comes from the FIRST overlay (the hero, in a
-      // hero+subtitle stack). The whole block enters/exits as one unit.
-      const head = group[0]!;
-      const inName = mapTransition(head.animation_in);
-      const outName = mapTransition(head.animation_out);
-      const transition = inName || outName ? { ...(inName ? { in: inName } : {}), ...(outName ? { out: outName } : {}) } : undefined;
-      // Duration: explicit number wins, with null priority — if ANY overlay in
-      // the group says null, the group holds for the full video. Otherwise
-      // use the max of the explicit durations (so all lines have time to read).
-      const anyNull = group.some((o) => o.duration_seconds === null);
-      const explicitMax = group.reduce((m, o) => (typeof o.duration_seconds === "number" ? Math.max(m, o.duration_seconds) : m), 0);
-      const length = anyNull
-        ? fullHold
-        : Math.min(60, Math.max(0.5, explicitMax || 2.7));
-      // Start: full-hold groups anchor at 0; explicit-duration groups sequence
-      // after the previous group (so a 2s flash card doesn't sit at 0 forever).
-      const start = anyNull
-        ? (gIdx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)))
-        : Math.min(cursor, Math.max(0, videoSeconds - length));
-      cursor = start + length + 0.2;
-      // Use Shotstack position="center" for every clip and shift each zone via
-      // an explicit y-offset. Anchoring boxes to frame edges (the previous
-      // approach) made adjacent zones overlap by hundreds of pixels even though
-      // text centers were apart — wrapped heroes bled across that overlap zone.
-      // Center-anchor + offset gives every zone a guaranteed vertical home.
-      const yOffset = POSITION_Y_OFFSET[head.position];
-      return {
-        asset: {
-          type: "html",
-          html: `<div class="stack">${linesHtml.join("")}</div>`,
-          css,
-          width: boxW,
-          height: boxH,
-        },
-        position: "center",
-        ...(yOffset !== 0 ? { offset: { x: 0, y: yOffset } } : {}),
-        start,
-        length,
-        ...(transition ? { transition } : {}),
-      };
-    }),
-  };
+  return groups.map((group, gIdx) => {
+    // Compose per-line CSS for the whole stack. @font-face declarations are
+    // deduped by family name so the same font isn't redeclared if multiple
+    // lines share it.
+    const seenFaces = new Set<string>();
+    const faceCsses: string[] = [];
+    const ruleCsses: string[] = [];
+    const linesHtml: string[] = [];
+    group.forEach((o, lineIdx) => {
+      const { faceCss, ruleCss } = lineCss(o, lineIdx, minSide, fontScale);
+      // Cheap dedupe: a face block starts with @font-face{font-family:'X';
+      // — bucket by that prefix.
+      const key = faceCss.slice(0, faceCss.indexOf("src:")); // family + weight + display, no src
+      if (!seenFaces.has(key)) {
+        seenFaces.add(key);
+        faceCsses.push(faceCss);
+      }
+      ruleCsses.push(ruleCss);
+      linesHtml.push(`<p class="line-${lineIdx}">${escapeHtml(o.text)}</p>`);
+    });
+    const css =
+      faceCsses.join("") +
+      `html,body{margin:0;padding:0;width:100%;height:100%}` +
+      // Flex column: vertically center the stack, horizontally center each line.
+      // inline-block lines so pill backgrounds hug their text instead of going edge-to-edge.
+      `.stack{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;box-sizing:border-box;padding:0 4%;text-align:center;overflow:hidden}` +
+      `.stack p{display:inline-block;margin:0;max-width:100%;line-height:1.15;word-wrap:break-word;overflow-wrap:break-word;hyphens:auto}` +
+      // Generous vertical breathing room between stacked lines (hero +
+      // subtitle reads as a designed pair, not a cramped pair). Sized in em
+      // of the second line so it scales with the smaller font and keeps
+      // proportionality across font sizes.
+      `.stack p + p{margin-top:0.45em}` +
+      ruleCsses.join("");
+    // Group's transition pair comes from the FIRST overlay (the hero, in a
+    // hero+subtitle stack). The whole block enters/exits as one unit.
+    const head = group[0]!;
+    const inName = mapTransition(head.animation_in);
+    const outName = mapTransition(head.animation_out);
+    const transition = inName || outName ? { ...(inName ? { in: inName } : {}), ...(outName ? { out: outName } : {}) } : undefined;
+    // Duration: explicit number wins, with null priority — if ANY overlay in
+    // the group says null, the group holds for the full video. Otherwise
+    // use the max of the explicit durations (so all lines have time to read).
+    const anyNull = group.some((o) => o.duration_seconds === null);
+    const explicitMax = group.reduce((m, o) => (typeof o.duration_seconds === "number" ? Math.max(m, o.duration_seconds) : m), 0);
+    const length = anyNull
+      ? fullHold
+      : Math.min(60, Math.max(0.5, explicitMax || 2.7));
+    // Start: full-hold groups anchor at 0; explicit-duration groups sequence
+    // after the previous group (so a 2s flash card doesn't sit at 0 forever).
+    const start = anyNull
+      ? (gIdx === 0 ? 0 : Math.min(cursor, Math.max(0, videoSeconds - length)))
+      : Math.min(cursor, Math.max(0, videoSeconds - length));
+    cursor = start + length + 0.2;
+    // Use Shotstack position="center" for every clip and shift each zone via
+    // an explicit y-offset. Anchoring boxes to frame edges (the previous
+    // approach) made adjacent zones overlap by hundreds of pixels even though
+    // text centers were apart — wrapped heroes bled across that overlap zone.
+    // Center-anchor + offset gives every zone a guaranteed vertical home.
+    const yOffset = POSITION_Y_OFFSET[head.position];
+    const clip = {
+      asset: {
+        type: "html",
+        html: `<div class="stack">${linesHtml.join("")}</div>`,
+        css,
+        width: boxW,
+        height: boxH,
+      },
+      position: "center",
+      ...(yOffset !== 0 ? { offset: { x: 0, y: yOffset } } : {}),
+      start,
+      length,
+      ...(transition ? { transition } : {}),
+    };
+    // Each group gets ITS OWN TRACK so multiple overlay groups can never
+    // share a Shotstack track and trigger the renderer's ambiguous overlap
+    // behavior (the production bug behind the "two overlays at the same y"
+    // failure). One overlay group → one track → one z-layer.
+    return { clips: [clip] };
+  });
 }
 
 // Exported for the estimator in state.ts so the render-time estimate counts
@@ -547,7 +576,7 @@ export function buildEdit(
   const totalSeconds = videoDurationSeconds(clips.length, perClipSeconds);
   const tracks: ShotstackEdit["timeline"]["tracks"] = [];
   if (groups.length > 0) {
-    tracks.push(overlayTrack(groups, size.width, size.height, preset.fontScale, totalSeconds));
+    tracks.push(...overlayTracks(groups, size.width, size.height, preset.fontScale, totalSeconds));
   }
   tracks.push(
     videoTrack(clips, perClipSeconds, {
